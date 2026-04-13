@@ -1,0 +1,5 @@
+snake
+snake.dSYM/
+test_logic
+*.o
+*.dSYM/
