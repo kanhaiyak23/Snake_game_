@@ -1,0 +1,48 @@
+#ifndef SNAKE_H
+#define SNAKE_H
+
+/* snake.h — Snake Game Logic
+ * All game data (segments, food) is managed via custom memory.c alloc/dealloc.
+ */
+
+/* ---- Data structures ---- */
+
+typedef struct Segment {
+    int x, y;              /* position on game field (0-indexed) */
+    struct Segment *next;  /* linked list toward tail             */
+} Segment;
+
+typedef struct Snake {
+    Segment *head;
+    Segment *tail;
+    int length;
+    int dx, dy;            /* direction: one of {0,1,-1}          */
+} Snake;
+
+typedef struct Food {
+    int x, y;
+    int active;
+} Food;
+
+typedef struct GameState {
+    Snake   snake;
+    Food    food;
+    int     score;
+    int     high_score;
+    int     level;
+    int     game_over;
+    int     paused;
+    int     ticks;         /* frame counter                       */
+    int     foods_eaten;   /* total food items consumed this game */
+} GameState;
+
+/* ---- API ---- */
+
+void game_init(GameState *gs, int prev_high_score);
+void game_update(GameState *gs);            /* advance one tick           */
+void game_handle_input(GameState *gs, char key);
+void game_render(const GameState *gs);      /* draw everything            */
+void game_free(GameState *gs);              /* dealloc all segments       */
+int  game_speed_delay(const GameState *gs); /* microseconds between ticks */
+
+#endif /* SNAKE_H */
