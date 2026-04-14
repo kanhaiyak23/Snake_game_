@@ -14,7 +14,7 @@ int  my_in_bounds(int x, int y, int w, int h);
 int  my_max(int a, int b);
 int  my_min(int a, int b);
 
-/* Simple pseudo-random number generator (LCG) */
+/* XorShift32 pseudo-random number generator (O(1) per call) */
 void my_srand(unsigned int seed);
 int  my_rand(void);
 int  my_rand_range(int lo, int hi);  /* lo inclusive, hi exclusive */
