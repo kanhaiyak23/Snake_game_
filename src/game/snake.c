@@ -79,8 +79,15 @@ void game_init(GameState *gs, int prev_high_score) {
     Segment *tail = seg_new(start_x - 2, start_y);
 
     if (!head || !mid || !tail) {
-        /* OOM on init — should never happen with 1MB pool */
-        gs->game_over = 1;
+        /* OOM on init: release any partial allocs so pool state stays consistent */
+        if (head) dealloc(head);
+        if (mid)  dealloc(mid);
+        if (tail) dealloc(tail);
+        gs->snake.head   = (void*)0;
+        gs->snake.tail   = (void*)0;
+        gs->snake.length = 0;
+        gs->game_over    = 1;
+        gs->game_end_reason = GAME_END_OOM;
         return;
     }
 
@@ -100,6 +107,7 @@ void game_init(GameState *gs, int prev_high_score) {
     gs->paused      = 0;
     gs->ticks       = 0;
     gs->foods_eaten = 0;
+    gs->game_end_reason = GAME_END_NONE;
 
     place_food(gs);
 }
@@ -114,7 +122,7 @@ void game_init(GameState *gs, int prev_high_score) {
  * --------------------------------------------------------------- */
 void game_handle_input(GameState *gs, char key) {
     if (key == KEY_PAUSE) { gs->paused = !gs->paused; return; }
-    if (key == KEY_QUIT)  { gs->game_over = 1; return; }
+    if (key == KEY_QUIT)  { gs->game_over = 1; gs->game_end_reason = GAME_END_QUIT; return; }
 
     /*
      * Anti-reversal: only block the exact opposite direction.
@@ -146,6 +154,7 @@ void game_update(GameState *gs) {
     /* --- Boundary check via math.c --- */
     if (!my_in_bounds(nx, ny, FIELD_W, FIELD_H)) {
         gs->game_over = 1;
+        gs->game_end_reason = GAME_END_COLLISION;
         return;
     }
 
@@ -153,21 +162,17 @@ void game_update(GameState *gs) {
      * Walk all segments from head up to (but NOT including) the tail.
      * The tail will vacate its cell this tick (unless we eat food),
      * so it is safe to ignore it for this frame.
-     * 
-     * FIX: The old code computed last_before_tail but then used
-     * `cur != gs->snake.tail` as the loop terminator — which is correct
-     * for movement collision. Kept as-is but removed the dead variable.
      */
-    Segment *cur = gs->snake.head;
-    while (cur && cur->next != (void*)0) {
-        /* Check all segments except the last one (tail vacates this tick) */
-        if (cur->x == nx && cur->y == ny) {
-            gs->game_over = 1;
-            return;
+    {
+        Segment *cur = gs->snake.head;
+        while (cur && cur != gs->snake.tail) {
+            if (cur->x == nx && cur->y == ny) {
+                gs->game_over = 1;
+                gs->game_end_reason = GAME_END_COLLISION;
+                return;
+            }
+            cur = cur->next;
         }
-        cur = cur->next;
-        /* Stop before the tail — tail moves away this tick */
-        if (cur == gs->snake.tail) break;
     }
 
     /* --- Check food collision --- */
@@ -175,7 +180,11 @@ void game_update(GameState *gs) {
 
     /* --- Allocate new head segment via memory.c --- */
     Segment *new_head = seg_new(nx, ny);
-    if (!new_head) { gs->game_over = 1; return; }
+    if (!new_head) {
+        gs->game_over = 1;
+        gs->game_end_reason = GAME_END_OOM;
+        return;
+    }
     new_head->next    = gs->snake.head;
     gs->snake.head    = new_head;
     gs->snake.length++;
@@ -192,14 +201,25 @@ void game_update(GameState *gs) {
         if (gs->level > 10) gs->level = 10;
         place_food(gs);
     } else {
-        /* Remove tail: dealloc via memory.c */
+        /* Remove tail: walk to the node just before the tail */
         Segment *old_tail = gs->snake.tail;
-        /* Walk to the node just before the tail */
-        Segment *prev = gs->snake.head;
+        Segment *prev     = gs->snake.head;
         while (prev->next && prev->next != old_tail) prev = prev->next;
-        prev->next     = (void*)0;
-        gs->snake.tail = prev;
-        dealloc(old_tail);      /* ← dynamic dealloc every frame */
+
+        if (prev->next != old_tail) {
+            /* List invariant broken — undo new head so state stays consistent */
+            Segment *orphan = new_head;
+            gs->snake.head    = orphan->next;
+            gs->snake.length--;
+            dealloc(orphan);
+            gs->game_over     = 1;
+            gs->game_end_reason = GAME_END_INTERNAL;
+            return;
+        }
+
+        prev->next        = (void*)0;
+        gs->snake.tail    = prev;
+        dealloc(old_tail);
         gs->snake.length--;
     }
 
@@ -213,12 +233,11 @@ void game_update(GameState *gs) {
  *   Row 1  : title bar with controls reminder and direction indicator
  *   Row 2  : separator line
  *   Row 3+ : game field with border
- *   Row 25 : score/level/length stats
- *   Row 26 : level progress bar + next-level info
- *   Row 27 : memory debug line
+ *   Row 25 : score / high / length / food
+ *   Row 26 : memory debug line
  * --------------------------------------------------------------- */
 void game_render(const GameState *gs) {
-    int i, j;
+    int i;
     screen_clear();
 
     /* ---- Row 1: Title bar ---- */
@@ -280,12 +299,11 @@ void game_render(const GameState *gs) {
         }
     }
 
-    /* ---- Row 25: Stats panel ---- */
+    /* ---- Row below field: Stats panel ---- */
     int score_row = FIELD_Y + FIELD_H + 2;
-    char sbuf[16], hbuf[16], lbuf[8], lenbuf[8], fbuf[8];
+    char sbuf[16], hbuf[16], lenbuf[8], fbuf[8];
     my_itoa(gs->score,        sbuf);
     my_itoa(gs->high_score,   hbuf);
-    my_itoa(gs->level,        lbuf);
     my_itoa(gs->snake.length, lenbuf);
     my_itoa(gs->foods_eaten,  fbuf);
 
@@ -301,12 +319,6 @@ void game_render(const GameState *gs) {
     screen_putstr(hbuf);
     screen_reset_color();
     screen_set_fg(97);
-    screen_putstr("  Lvl:");
-    screen_set_fg(96);
-    screen_putstr(lbuf);
-    screen_putstr("/10");
-    screen_reset_color();
-    screen_set_fg(97);
     screen_putstr("  Len:");
     screen_set_fg(95);
     screen_putstr(lenbuf);
@@ -316,53 +328,6 @@ void game_render(const GameState *gs) {
     screen_set_fg(91);
     screen_putstr(fbuf);
     screen_reset_color();
-
-    /* ---- Row 26: Level progress bar ---- */
-    screen_goto(FIELD_X, score_row + 1);
-    screen_set_fg(97);
-    screen_putstr("Next Lvl:[");
-
-    int progress   = my_mod(gs->score, 50);
-    int bar_filled = my_div(my_mul(progress, 20), 50);
-    int bar_empty  = 20 - bar_filled;
-
-    if (gs->level >= 10) {
-        /* Max level — show a full golden bar */
-        screen_set_fg(93);
-        for (j = 0; j < 20; j++) screen_putchar('=');
-    } else {
-        screen_set_fg(92);
-        for (j = 0; j < bar_filled; j++) screen_putchar('=');
-        if (bar_filled < 20) {
-            screen_set_fg(92);
-            screen_putchar('>');
-            bar_empty--;
-        }
-        screen_set_fg(90);
-        for (j = 0; j < bar_empty; j++) screen_putchar('-');
-    }
-    screen_reset_color();
-    screen_set_fg(97);
-    screen_putstr("]");
-
-    if (gs->level >= 10) {
-        screen_set_fg(93);
-        screen_set_bold();
-        screen_putstr("  MAX LEVEL!");
-        screen_reset_color();
-    } else {
-        int pts_to_next = 50 - progress;
-        char pnbuf[8], nextlvl[8];
-        my_itoa(pts_to_next, pnbuf);
-        my_itoa(gs->level + 1, nextlvl);
-        screen_set_fg(90);
-        screen_putstr("  (");
-        screen_putstr(pnbuf);
-        screen_putstr("pts -> Lvl ");
-        screen_putstr(nextlvl);
-        screen_putstr(")");
-        screen_reset_color();
-    }
 
     /* ---- Paused overlay — centred box ---- */
     if (gs->paused) {
@@ -380,8 +345,8 @@ void game_render(const GameState *gs) {
         screen_reset_color();
     }
 
-    /* ---- Row 27: Memory debug info ---- */
-    screen_goto(FIELD_X, score_row + 2);
+    /* ---- Memory debug info ---- */
+    screen_goto(FIELD_X, score_row + 1);
     screen_set_fg(90);
     screen_putstr("Mem:");
     char membuf[16];

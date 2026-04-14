@@ -24,6 +24,13 @@ typedef struct Food {
     int active;
 } Food;
 
+/* Why the session ended — used for game-over message (e.g. heap full). */
+#define GAME_END_NONE       0
+#define GAME_END_COLLISION  1  /* wall or self */
+#define GAME_END_OOM        2  /* alloc() failed — pool exhausted / fragmentation */
+#define GAME_END_QUIT       3  /* user pressed Q */
+#define GAME_END_INTERNAL   4  /* broken invariant; should never run in normal play */
+
 typedef struct GameState {
     Snake   snake;
     Food    food;
@@ -34,6 +41,7 @@ typedef struct GameState {
     int     paused;
     int     ticks;         /* frame counter                       */
     int     foods_eaten;   /* total food items consumed this game */
+    int     game_end_reason; /* GAME_END_* when game_over is set */
 } GameState;
 
 /* ---- API ---- */

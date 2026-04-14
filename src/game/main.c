@@ -125,8 +125,7 @@ static void show_start_screen(void) {
     screen_set_fg(96);
     screen_putstr(" to grow.  Avoid walls and your own body!");
     screen_goto(10, 21);
-    screen_putstr("  Score 50+ pts to level up  (max Level 10).");
-    screen_putstr("  Speed increases each level.");
+    screen_putstr("  Higher score = faster play (speed scales with your score).");
     screen_reset_color();
 
     draw_hline(9, 22, 50);
@@ -190,11 +189,13 @@ static void show_countdown(void) {
  *   length     — snake length at time of death
  *   foods      — total food items eaten this game
  *   new_high   — 1 if score beat the previous session high score
+ *   end_reason — GAME_END_* from snake.h (OOM / quit / collision)
  *
  * Returns 1 to play again, 0 to quit.
  * --------------------------------------------------------------- */
 static int show_game_over_screen(int score, int high_score,
-                                  int length, int foods, int new_high) {
+                                  int length, int foods, int new_high,
+                                  int end_reason) {
     screen_clear();
 
     /* ---- GAME OVER banner ---- */
@@ -214,6 +215,27 @@ static int show_game_over_screen(int score, int high_score,
     screen_goto(8, 6);
     screen_putstr("+==================================================+");
     screen_reset_color();
+
+    /* ---- Reason: memory / quit (collision needs no extra line) ---- */
+    if (end_reason == GAME_END_OOM) {
+        screen_goto(8, 7);
+        screen_set_fg(93);
+        screen_set_bold();
+        screen_putstr(
+            "  ! Memory: alloc() failed — 1 MB heap full or fragmented.");
+        screen_reset_color();
+    } else if (end_reason == GAME_END_QUIT) {
+        screen_goto(10, 7);
+        screen_set_fg(96);
+        screen_putstr("  (You quit with Q.)");
+        screen_reset_color();
+    } else if (end_reason == GAME_END_INTERNAL) {
+        screen_goto(8, 7);
+        screen_set_fg(91);
+        screen_set_bold();
+        screen_putstr("  ! Internal error: snake list invariant failed.");
+        screen_reset_color();
+    }
 
     /* ---- Stats ---- */
     char sbuf[16], hbuf[16], lenbuf[16], fbuf[16];
@@ -349,7 +371,8 @@ int main(void) {
         game_free(&gs);
 
         running = show_game_over_screen(
-            final_score, final_high, final_length, final_foods, is_new_high
+            final_score, final_high, final_length, final_foods, is_new_high,
+            gs.game_end_reason
         );
     }
 
