@@ -42,6 +42,8 @@ typedef struct GameState {
     int     ticks;         /* frame counter                       */
     int     foods_eaten;   /* total food items consumed this game */
     int     game_end_reason; /* GAME_END_* when game_over is set */
+    int     lives;         /* remaining lives (starts at 3)       */
+    int     just_died;     /* set to 1 for one cycle after losing a life */
 } GameState;
 
 /* ---- API ---- */

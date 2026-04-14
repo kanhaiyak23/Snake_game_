@@ -61,6 +61,50 @@ static void place_food(GameState *gs) {
 }
 
 /* ---------------------------------------------------------------
+ * game_respawn: called when a life is lost but lives remain.
+ * Frees the current snake, rebuilds it at the centre, places new food.
+ * --------------------------------------------------------------- */
+static void game_respawn(GameState *gs) {
+    /* Free every segment of the current snake */
+    Segment *cur = gs->snake.head;
+    while (cur) {
+        Segment *nxt = cur->next;
+        dealloc(cur);
+        cur = nxt;
+    }
+
+    /* Rebuild snake at field centre, pointing right */
+    int start_x = my_div(FIELD_W, 2);
+    int start_y = my_div(FIELD_H, 2);
+
+    Segment *head = seg_new(start_x,     start_y);
+    Segment *mid  = seg_new(start_x - 1, start_y);
+    Segment *tail = seg_new(start_x - 2, start_y);
+
+    if (!head || !mid || !tail) {
+        if (head) dealloc(head);
+        if (mid)  dealloc(mid);
+        if (tail) dealloc(tail);
+        gs->game_over = 1;
+        gs->game_end_reason = GAME_END_OOM;
+        return;
+    }
+
+    head->next = mid;
+    mid->next  = tail;
+
+    gs->snake.head   = head;
+    gs->snake.tail   = tail;
+    gs->snake.length = 3;
+    gs->snake.dx     = 1;
+    gs->snake.dy     = 0;
+
+    gs->just_died = 1;
+
+    place_food(gs);
+}
+
+/* ---------------------------------------------------------------
  * game_init: initialise a fresh game.
  * Snake starts as 3 segments in the middle of the field.
  * high_score is passed in so it persists across games.
@@ -108,6 +152,8 @@ void game_init(GameState *gs, int prev_high_score) {
     gs->ticks       = 0;
     gs->foods_eaten = 0;
     gs->game_end_reason = GAME_END_NONE;
+    gs->lives       = 3;
+    gs->just_died   = 0;
 
     place_food(gs);
 }
@@ -153,8 +199,13 @@ void game_update(GameState *gs) {
 
     /* --- Boundary check via math.c --- */
     if (!my_in_bounds(nx, ny, FIELD_W, FIELD_H)) {
-        gs->game_over = 1;
-        gs->game_end_reason = GAME_END_COLLISION;
+        gs->lives--;
+        if (gs->lives <= 0) {
+            gs->game_over = 1;
+            gs->game_end_reason = GAME_END_COLLISION;
+        } else {
+            game_respawn(gs);
+        }
         return;
     }
 
@@ -167,8 +218,13 @@ void game_update(GameState *gs) {
         Segment *cur = gs->snake.head;
         while (cur && cur != gs->snake.tail) {
             if (cur->x == nx && cur->y == ny) {
-                gs->game_over = 1;
-                gs->game_end_reason = GAME_END_COLLISION;
+                gs->lives--;
+                if (gs->lives <= 0) {
+                    gs->game_over = 1;
+                    gs->game_end_reason = GAME_END_COLLISION;
+                } else {
+                    game_respawn(gs);
+                }
                 return;
             }
             cur = cur->next;
@@ -328,6 +384,18 @@ void game_render(const GameState *gs) {
     screen_set_fg(91);
     screen_putstr(fbuf);
     screen_reset_color();
+
+    /* Lives — red hearts */
+    {
+        int j;
+        screen_set_fg(97);
+        screen_putstr("  Lives:");
+        for (j = 0; j < gs->lives; j++) {
+            screen_set_fg(91);
+            screen_putstr(" \xe2\x99\xa5");  /* UTF-8 heart ♥ */
+        }
+        screen_reset_color();
+    }
 
     /* ---- Paused overlay — centred box ---- */
     if (gs->paused) {

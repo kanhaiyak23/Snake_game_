@@ -355,6 +355,25 @@ int main(void) {
             game_update(&gs);
             game_render(&gs);
 
+            /* Life lost — flash message then mini countdown before resuming */
+            if (gs.just_died) {
+                gs.just_died = 0;
+                int mid_col = FIELD_X + my_div(FIELD_W, 2) - 9;
+                int mid_row = FIELD_Y + my_div(FIELD_H, 2) - 1;
+                screen_goto(mid_col, mid_row);
+                screen_set_fg(91); screen_set_bold();
+                screen_putstr("+--------------------+");
+                screen_goto(mid_col, mid_row + 1);
+                screen_putstr("|    LIFE LOST!      |");
+                screen_goto(mid_col, mid_row + 2);
+                screen_putstr("+--------------------+");
+                screen_reset_color();
+                screen_flush();
+                drain_input();
+                usleep(900000);
+                drain_input();
+            }
+
             usleep((unsigned int)game_speed_delay(&gs));
         }
 
