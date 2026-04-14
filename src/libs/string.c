@@ -8,16 +8,23 @@
 /* ---------------------------------------------------------------
  * Length: count bytes until null terminator.
  * --------------------------------------------------------------- */
-int my_strlen(const char *s) {
+//time complexity: O(n) where n is the length of the string
+ int my_strlen(const char *s) {
     int len = 0;
     while (s[len] != '\0') len++;
     return len;
 }
 
+//space complexity: O(1) 
+//it is used in 
+
 /* ---------------------------------------------------------------
  * Copy src into dst (including null terminator).
  * --------------------------------------------------------------- */
-void my_strcpy(char *dst, const char *src) {
+//time complexity: O(n) where n is the length of the string
+//space complexity: O(1) 
+
+ void my_strcpy(char *dst, const char *src) {
     int i = 0;
     while (src[i] != '\0') {
         dst[i] = src[i];
@@ -30,6 +37,9 @@ void my_strcpy(char *dst, const char *src) {
  * Compare two strings. Returns 0 if equal, negative if a<b,
  * positive if a>b.
  * --------------------------------------------------------------- */
+ //time complexity: O(n) where n is the length of the string
+ //space complexity: O(1) 
+ 
 int my_strcmp(const char *a, const char *b) {
     int i = 0;
     while (a[i] != '\0' && b[i] != '\0') {
@@ -42,7 +52,8 @@ int my_strcmp(const char *a, const char *b) {
 int my_strncmp(const char *a, const char *b, int n) {
     int i = 0;
     while (i < n && a[i] != '\0' && b[i] != '\0') {
-        if (a[i] != b[i]) return (int)a[i] - (int)b[i];
+        if (a[i] != b[i]) return (int)a[i] - (int)b[i];  //if the characters are not equal then return the difference between the characters
+
         i++;
     }
     if (i == n) return 0;
@@ -52,6 +63,7 @@ int my_strncmp(const char *a, const char *b, int n) {
 /* ---------------------------------------------------------------
  * Append src onto end of dst (dst must have enough space).
  * --------------------------------------------------------------- */
+//it is used in concatation
 void my_strcat(char *dst, const char *src) {
     int di = my_strlen(dst);
     int si = 0;
@@ -63,6 +75,10 @@ void my_strcat(char *dst, const char *src) {
  * Integer to decimal string.
  * Handles 0, positive, and negative numbers.
  * --------------------------------------------------------------- */
+ //time complexity: O(log(n)) where n is the integer
+ //space complexity: O(1) 
+ //it is used in the game_init function to convert the score into a string
+ //reverse + remainder
 void my_itoa(int n, char *buf) {
     int i = 0;
     int neg = 0;

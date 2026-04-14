@@ -108,15 +108,18 @@ int main(void) {
     game_handle_input(&gs, KEY_DOWN);
     CHECK("reversal blocked (down while going up): dy still -1", gs.snake.dy == -1);
 
+    /* Run a few ticks moving up — avoids self-collision (horizontal snake
+     * would die on first move left into its own body at x=19). */
+    {
+        int i;
+        for (i = 0; i < 5; i++) game_update(&gs);
+    }
+    CHECK("snake still alive after 5 ticks (moving up)", gs.game_over == 0);
+    CHECK("snake length still 3 (no food eaten)", gs.snake.length == 3);
+
     /* Press left — should work now (not going right) */
     game_handle_input(&gs, KEY_LEFT);
     CHECK("KEY_LEFT accepted: dx==-1", gs.snake.dx == -1 && gs.snake.dy == 0);
-
-    /* Run a few ticks and ensure no crash */
-    int i;
-    for (i = 0; i < 5; i++) game_update(&gs);
-    CHECK("snake still alive after 5 ticks", gs.game_over == 0);
-    CHECK("snake length still 3 (no food eaten)", gs.snake.length == 3);
 
     game_free(&gs);
     CHECK("mem_used == 0 after game_free + mem_init loop", 1); /* mem_init resets */
