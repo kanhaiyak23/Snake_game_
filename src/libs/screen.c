@@ -6,6 +6,52 @@
 #include "screen.h"
 #include "string.h"
 #include <stdio.h>   /* allowed: terminal I/O only */
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+static int layout_field_x = FIELD_X;
+static int layout_field_y = FIELD_Y;
+static int layout_field_w = FIELD_W;
+static int layout_field_h = FIELD_H;
+
+static int clamp_int(int v, int lo, int hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+void screen_update_layout(void) {
+    struct winsize ws;
+    int term_w = 80;
+    int term_h = 24;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        if (ws.ws_col > 0) term_w = (int)ws.ws_col;
+        if (ws.ws_row > 0) term_h = (int)ws.ws_row;
+    }
+
+    {
+        int min_w = 20;
+        int min_h = 10;
+        int max_w = term_w - 2;
+        int max_h = term_h - 6;
+        int border_w;
+        int border_x;
+
+        if (max_w < min_w) max_w = min_w;
+        if (max_h < min_h) max_h = min_h;
+
+        layout_field_w = clamp_int(FIELD_W, min_w, max_w);
+        layout_field_h = clamp_int(FIELD_H, min_h, max_h);
+
+        border_w = layout_field_w + 2;
+        border_x = (term_w - border_w) / 2 + 1;
+        if (border_x < 1) border_x = 1;
+
+        layout_field_x = border_x + 1;
+        layout_field_y = 3;
+    }
+}
 
 /* ---------------------------------------------------------------
  * screen_init: switch to alternate screen buffer and clear it.
@@ -13,6 +59,7 @@
  * This is the standard approach for terminal games (vim, htop, etc.).
  * --------------------------------------------------------------- */
 void screen_init(void) {
+    screen_update_layout();
     printf("\033[?1049h");  /* enter alternate screen buffer */
     printf("\033[2J\033[H"); /* clear it                      */
     screen_hide_cursor();
@@ -130,3 +177,8 @@ void screen_reset_color(void) {
 void screen_flush(void) {
     fflush(stdout);
 }
+
+int screen_field_x(void) { return layout_field_x; }
+int screen_field_y(void) { return layout_field_y; }
+int screen_field_w(void) { return layout_field_w; }
+int screen_field_h(void) { return layout_field_h; }

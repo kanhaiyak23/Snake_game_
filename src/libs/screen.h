@@ -16,6 +16,11 @@ void screen_hide_cursor(void);
 void screen_show_cursor(void);
 void screen_draw_border(int x, int y, int w, int h);
 void screen_flush(void);
+void screen_update_layout(void);
+int  screen_field_x(void);
+int  screen_field_y(void);
+int  screen_field_w(void);
+int  screen_field_h(void);
 
 /* Color and style helpers — ANSI SGR codes */
 void screen_set_fg(int code);   /* foreground: 32=green, 31=red, 33=yellow, 90-97=bright */
@@ -23,10 +28,10 @@ void screen_set_bg(int code);   /* background: 42=green, 41=red, 40=black       
 void screen_set_bold(void);     /* bold text                                             */
 void screen_reset_color(void);  /* reset all attributes                                 */
 
-/* Screen coordinates for the game field */
-#define FIELD_X      2       /* left border column (1-indexed)          */
-#define FIELD_Y      3       /* top border row — row 1 reserved for title */
-#define FIELD_W      40      /* inner width  in characters               */
-#define FIELD_H      20      /* inner height in character rows           */
+/* Fallback defaults used when terminal size can't be read. */
+#define FIELD_X      2
+#define FIELD_Y      3
+#define FIELD_W      40
+#define FIELD_H      20
 
 #endif /* SCREEN_H */

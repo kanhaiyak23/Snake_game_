@@ -14,9 +14,10 @@
 #include <fcntl.h>           /* fcntl, O_NONBLOCK                         */
 
 static struct termios old_tio;  /* saved terminal settings */
+static int esc_state = 0;       /* 0:none, 1:ESC, 2:ESC+[ , 3:ESC+O */
 
 /* ---------------------------------------------------------------
- * keyboard_init: switch terminal to raw + non-canonical mode.
+ * keyboard_init: switch terminal to raw + non-canonical mode. for real-time input
  * Characters are available immediately (no Enter required),
  * echo is disabled, and stdin becomes non-blocking.
  * --------------------------------------------------------------- */
@@ -62,25 +63,43 @@ void keyboard_restore(void) {
  * --------------------------------------------------------------- */
 char keyPressed(void) {
     char c = 0;
-    int  n = (int)read(STDIN_FILENO, &c, 1);
-    if (n <= 0) return 0;
-
-    /* Arrow key: ESC [ A/B/C/D  (~3 bytes) */
-    if (c == '\033') {
-        char seq[2];
-        /* Try to read two more bytes; they may or may not be there */
-        if (read(STDIN_FILENO, &seq[0], 1) <= 0) return c;
-        if (read(STDIN_FILENO, &seq[1], 1) <= 0) return c;
-        if (seq[0] == '[') {
-            if (seq[1] == 'A') return KEY_UP;     /* ↑ */
-            if (seq[1] == 'B') return KEY_DOWN;   /* ↓ */
-            if (seq[1] == 'C') return KEY_RIGHT;  /* → */
-            if (seq[1] == 'D') return KEY_LEFT;   /* ← */
+    char last_key = 0;
+    while (read(STDIN_FILENO, &c, 1) > 0) {
+        if (esc_state == 0) {
+            if (c == '\033') { esc_state = 1; continue; }
+            if (c >= 'A' && c <= 'Z') c = (char)(c + ('a' - 'A'));
+            last_key = c;
+            continue;
         }
-        return 0;
-    }
 
-    return c;
+        if (esc_state == 1) {
+            if (c == '[') {
+                esc_state = 2;
+                continue;
+            }
+            /* Some terminals emit ESC O A/B/C/D for arrows. */
+            if (c == 'O') {
+                esc_state = 3;
+                continue;
+            }
+            esc_state = 0;
+            if (c == '\033') { esc_state = 1; continue; }
+            continue;
+        }
+
+        /* esc_state == 2 or 3 -> expect final arrow byte */
+        if (esc_state == 2 || esc_state == 3) {
+            esc_state = 0;
+            if (c == 'A') { last_key = KEY_UP;    continue; }  /* ↑ */
+            if (c == 'B') { last_key = KEY_DOWN;  continue; }  /* ↓ */
+            if (c == 'C') { last_key = KEY_RIGHT; continue; }  /* → */
+            if (c == 'D') { last_key = KEY_LEFT;  continue; }  /* ← */
+            continue;
+        }
+
+        esc_state = 0;
+    }
+    return last_key;
 }
 
 /* ---------------------------------------------------------------
