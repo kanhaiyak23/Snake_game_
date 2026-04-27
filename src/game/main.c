@@ -155,10 +155,13 @@ static void show_start_screen(void) {
  * Gives the player time to position their fingers.
  * --------------------------------------------------------------- */
 static void show_countdown(void) {
-    int centre_col = FIELD_X + my_div(FIELD_W, 2) - 1;
-    int centre_row = FIELD_Y + my_div(FIELD_H, 2);
+    int centre_col;
+    int centre_row;
     int i;
     char dbuf[4];
+    screen_update_layout();
+    centre_col = screen_field_x() + my_div(screen_field_w(), 2) - 1;
+    centre_row = screen_field_y() + my_div(screen_field_h(), 2);
 
     for (i = 3; i >= 1; i--) {
         screen_goto(centre_col, centre_row);
@@ -194,7 +197,7 @@ static void show_countdown(void) {
  * Returns 1 to play again, 0 to quit.
  * --------------------------------------------------------------- */
 static int show_game_over_screen(int score, int high_score,
-                                  int length, int foods, int new_high,
+                                  int length, int foods, int lives_left, int new_high,
                                   int end_reason) {
     screen_clear();
 
@@ -238,11 +241,12 @@ static int show_game_over_screen(int score, int high_score,
     }
 
     /* ---- Stats ---- */
-    char sbuf[16], hbuf[16], lenbuf[16], fbuf[16];
+    char sbuf[16], hbuf[16], lenbuf[16], fbuf[16], lbuf[16];
     my_itoa(score,  sbuf);
     my_itoa(high_score, hbuf);
     my_itoa(length, lenbuf);
     my_itoa(foods,  fbuf);
+    my_itoa(lives_left, lbuf);
 
     screen_goto(10, 8);
     screen_set_fg(97);
@@ -274,29 +278,36 @@ static int show_game_over_screen(int score, int high_score,
     screen_putstr(fbuf);
     screen_reset_color();
 
+    screen_goto(10, 12);
+    screen_set_fg(97);
+    screen_putstr("  Lives Left    :  ");
+    screen_set_fg(96);
+    screen_putstr(lbuf);
+    screen_reset_color();
+
     /* New high-score celebration */
     if (new_high) {
-        screen_goto(10, 13);
+        screen_goto(10, 14);
         screen_set_fg(93);
         screen_set_bold();
         screen_putstr("  *** New Personal Best! Congratulations! ***");
         screen_reset_color();
     }
 
-    draw_hline(9, 15, 50);
+    draw_hline(9, 16, 50);
 
     /* ---- Options — two distinct visual buttons ---- */
-    screen_goto(9, 16);
+    screen_goto(9, 17);
     screen_set_fg(92);
     screen_putstr("  +----------------------+  +----------------------+");
-    screen_goto(9, 17);
-    screen_putstr("  |   SPACE  /  ENTER    |  |          Q           |");
     screen_goto(9, 18);
+    screen_putstr("  |   SPACE  /  ENTER    |  |          Q           |");
+    screen_goto(9, 19);
     screen_set_bold();
     screen_putstr("  |     > Play Again     |  |     > Quit Game      |");
     screen_reset_color();
     screen_set_fg(92);
-    screen_goto(9, 19);
+    screen_goto(9, 20);
     screen_putstr("  +----------------------+  +----------------------+");
     screen_reset_color();
 
@@ -355,25 +366,6 @@ int main(void) {
             game_update(&gs);
             game_render(&gs);
 
-            /* Life lost — flash message then mini countdown before resuming */
-            if (gs.just_died) {
-                gs.just_died = 0;
-                int mid_col = FIELD_X + my_div(FIELD_W, 2) - 9;
-                int mid_row = FIELD_Y + my_div(FIELD_H, 2) - 1;
-                screen_goto(mid_col, mid_row);
-                screen_set_fg(91); screen_set_bold();
-                screen_putstr("+--------------------+");
-                screen_goto(mid_col, mid_row + 1);
-                screen_putstr("|    LIFE LOST!      |");
-                screen_goto(mid_col, mid_row + 2);
-                screen_putstr("+--------------------+");
-                screen_reset_color();
-                screen_flush();
-                drain_input();
-                usleep(900000);
-                drain_input();
-            }
-
             usleep((unsigned int)game_speed_delay(&gs));
         }
 
@@ -382,6 +374,7 @@ int main(void) {
         int final_high   = gs.high_score;
         int final_length = gs.snake.length;
         int final_foods  = gs.foods_eaten;
+        int final_lives  = gs.lives;
         int is_new_high  = (final_score > prev_high && final_score > 0);
 
         if (final_high > high_score) high_score = final_high;
@@ -390,7 +383,8 @@ int main(void) {
         game_free(&gs);
 
         running = show_game_over_screen(
-            final_score, final_high, final_length, final_foods, is_new_high,
+            final_score, final_high, final_length, final_foods, final_lives,
+            is_new_high,
             gs.game_end_reason
         );
     }

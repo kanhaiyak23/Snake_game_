@@ -22,6 +22,8 @@
 #include <stdio.h>    /* allowed: printf for score UI only */
 #include <unistd.h>  /* usleep */
 
+static void place_food(GameState *gs, int food_idx);
+
 /* ---------------------------------------------------------------
  * Internal helper: allocate a new Segment at (x,y).
  * Returns pointer to the new segment, or NULL on OOM.
@@ -35,15 +37,77 @@ static Segment *seg_new(int x, int y) {
     return s;
 }
 
+/* Build/reset snake to starting position; keep score/lives unchanged. */
+static int reset_snake(GameState *gs) {
+    int start_x = my_div(screen_field_w(), 2);
+    int start_y = my_div(screen_field_h(), 2);
+    Segment *head = seg_new(start_x,     start_y);
+    Segment *mid  = seg_new(start_x - 1, start_y);
+    Segment *tail = seg_new(start_x - 2, start_y);
+
+    if (!head || !mid || !tail) {
+        if (head) dealloc(head);
+        if (mid)  dealloc(mid);
+        if (tail) dealloc(tail);
+        return 0;
+    }
+
+    head->next = mid;
+    mid->next  = tail;
+    gs->snake.head   = head;
+    gs->snake.tail   = tail;
+    gs->snake.length = 3;
+    gs->snake.dx     = 1;
+    gs->snake.dy     = 0;
+    return 1;
+}
+
+static void clear_snake(GameState *gs) {
+    Segment *cur = gs->snake.head;
+    while (cur) {
+        Segment *nxt = cur->next;
+        dealloc(cur);
+        cur = nxt;
+    }
+    gs->snake.head   = (void*)0;
+    gs->snake.tail   = (void*)0;
+    gs->snake.length = 0;
+}
+
+/* Lose one life and respawn; returns 1 if game should continue. */
+static int lose_life_and_respawn(GameState *gs) {
+    if (gs->lives <= 1) {
+        gs->lives = 0;
+        gs->game_over = 1;
+        gs->game_end_reason = GAME_END_COLLISION;
+        return 0;
+    }
+
+    gs->lives--;
+    clear_snake(gs);
+    if (!reset_snake(gs)) {
+        gs->game_over = 1;
+        gs->game_end_reason = GAME_END_OOM;
+        return 0;
+    }
+    {
+        int i;
+        for (i = 0; i < MAX_FOODS; i++) place_food(gs, i);
+    }
+    return 1;
+}
+
 /* ---------------------------------------------------------------
  * place_food: pick a random position not occupied by the snake.
  * Uses math.c for modulo and bounds checking.
  * --------------------------------------------------------------- */
-static void place_food(GameState *gs) {
+static void place_food(GameState *gs, int food_idx) {
+    int field_w = screen_field_w();
+    int field_h = screen_field_h();
     int ok = 0;
     while (!ok) {
-        int fx = my_rand_range(0, FIELD_W);
-        int fy = my_rand_range(0, FIELD_H);
+        int fx = my_rand_range(0, field_w);
+        int fy = my_rand_range(0, field_h);
 
         /* Ensure the position is not on any segment */
         ok = 1;
@@ -53,55 +117,21 @@ static void place_food(GameState *gs) {
             cur = cur->next;
         }
         if (ok) {
-            gs->food.x = fx;
-            gs->food.y = fy;
-            gs->food.active = 1;
+            int i;
+            for (i = 0; i < MAX_FOODS; i++) {
+                if (i != food_idx && gs->foods[i].active &&
+                    gs->foods[i].x == fx && gs->foods[i].y == fy) {
+                    ok = 0;
+                    break;
+                }
+            }
+        }
+        if (ok) {
+            gs->foods[food_idx].x = fx;
+            gs->foods[food_idx].y = fy;
+            gs->foods[food_idx].active = 1;
         }
     }
-}
-
-/* ---------------------------------------------------------------
- * game_respawn: called when a life is lost but lives remain.
- * Frees the current snake, rebuilds it at the centre, places new food.
- * --------------------------------------------------------------- */
-static void game_respawn(GameState *gs) {
-    /* Free every segment of the current snake */
-    Segment *cur = gs->snake.head;
-    while (cur) {
-        Segment *nxt = cur->next;
-        dealloc(cur);
-        cur = nxt;
-    }
-
-    /* Rebuild snake at field centre, pointing right */
-    int start_x = my_div(FIELD_W, 2);
-    int start_y = my_div(FIELD_H, 2);
-
-    Segment *head = seg_new(start_x,     start_y);
-    Segment *mid  = seg_new(start_x - 1, start_y);
-    Segment *tail = seg_new(start_x - 2, start_y);
-
-    if (!head || !mid || !tail) {
-        if (head) dealloc(head);
-        if (mid)  dealloc(mid);
-        if (tail) dealloc(tail);
-        gs->game_over = 1;
-        gs->game_end_reason = GAME_END_OOM;
-        return;
-    }
-
-    head->next = mid;
-    mid->next  = tail;
-
-    gs->snake.head   = head;
-    gs->snake.tail   = tail;
-    gs->snake.length = 3;
-    gs->snake.dx     = 1;
-    gs->snake.dy     = 0;
-
-    gs->just_died = 1;
-
-    place_food(gs);
 }
 
 /* ---------------------------------------------------------------
@@ -110,23 +140,11 @@ static void game_respawn(GameState *gs) {
  * high_score is passed in so it persists across games.
  * --------------------------------------------------------------- */
 void game_init(GameState *gs, int prev_high_score) {
+    screen_update_layout();
     /* Reset memory pool for clean start each game */
     mem_init();
 
-    /* Use math.c to compute start position dynamically */
-    int start_x = my_div(FIELD_W, 2);
-    int start_y = my_div(FIELD_H, 2);
-
-    /* Build initial snake body: head -> body -> tail   */
-    Segment *head = seg_new(start_x,     start_y);
-    Segment *mid  = seg_new(start_x - 1, start_y);
-    Segment *tail = seg_new(start_x - 2, start_y);
-
-    if (!head || !mid || !tail) {
-        /* OOM on init: release any partial allocs so pool state stays consistent */
-        if (head) dealloc(head);
-        if (mid)  dealloc(mid);
-        if (tail) dealloc(tail);
+    if (!reset_snake(gs)) {
         gs->snake.head   = (void*)0;
         gs->snake.tail   = (void*)0;
         gs->snake.length = 0;
@@ -135,15 +153,6 @@ void game_init(GameState *gs, int prev_high_score) {
         return;
     }
 
-    head->next = mid;
-    mid->next  = tail;
-
-    gs->snake.head   = head;
-    gs->snake.tail   = tail;
-    gs->snake.length = 3;
-    gs->snake.dx     = 1;   /* moving right initially */
-    gs->snake.dy     = 0;
-
     gs->score       = 0;
     gs->high_score  = prev_high_score;
     gs->level       = 1;
@@ -151,11 +160,13 @@ void game_init(GameState *gs, int prev_high_score) {
     gs->paused      = 0;
     gs->ticks       = 0;
     gs->foods_eaten = 0;
+    gs->lives       = INITIAL_LIVES;
     gs->game_end_reason = GAME_END_NONE;
-    gs->lives       = 3;
-    gs->just_died   = 0;
 
-    place_food(gs);
+    {
+        int i;
+        for (i = 0; i < MAX_FOODS; i++) place_food(gs, i);
+    }
 }
 
 /* ---------------------------------------------------------------
@@ -192,20 +203,24 @@ void game_handle_input(GameState *gs, char key) {
  * --------------------------------------------------------------- */
 void game_update(GameState *gs) {
     if (gs->game_over || gs->paused) return;
+    screen_update_layout();
+    {
+        int i;
+        for (i = 0; i < MAX_FOODS; i++) {
+            if (!my_in_bounds(gs->foods[i].x, gs->foods[i].y,
+                              screen_field_w(), screen_field_h())) {
+                place_food(gs, i);
+            }
+        }
+    }
 
     /* Compute new head position */
     int nx = gs->snake.head->x + gs->snake.dx;
     int ny = gs->snake.head->y + gs->snake.dy;
 
     /* --- Boundary check via math.c --- */
-    if (!my_in_bounds(nx, ny, FIELD_W, FIELD_H)) {
-        gs->lives--;
-        if (gs->lives <= 0) {
-            gs->game_over = 1;
-            gs->game_end_reason = GAME_END_COLLISION;
-        } else {
-            game_respawn(gs);
-        }
+    if (!my_in_bounds(nx, ny, screen_field_w(), screen_field_h())) {
+        (void)lose_life_and_respawn(gs);
         return;
     }
 
@@ -218,13 +233,7 @@ void game_update(GameState *gs) {
         Segment *cur = gs->snake.head;
         while (cur && cur != gs->snake.tail) {
             if (cur->x == nx && cur->y == ny) {
-                gs->lives--;
-                if (gs->lives <= 0) {
-                    gs->game_over = 1;
-                    gs->game_end_reason = GAME_END_COLLISION;
-                } else {
-                    game_respawn(gs);
-                }
+                (void)lose_life_and_respawn(gs);
                 return;
             }
             cur = cur->next;
@@ -232,7 +241,19 @@ void game_update(GameState *gs) {
     }
 
     /* --- Check food collision --- */
-    int ate = (nx == gs->food.x && ny == gs->food.y && gs->food.active);
+    int ate = 0;
+    int eaten_idx = -1;
+    {
+        int i;
+        for (i = 0; i < MAX_FOODS; i++) {
+            if (gs->foods[i].active &&
+                nx == gs->foods[i].x && ny == gs->foods[i].y) {
+                ate = 1;
+                eaten_idx = i;
+                break;
+            }
+        }
+    }
 
     /* --- Allocate new head segment via memory.c --- */
     Segment *new_head = seg_new(nx, ny);
@@ -247,7 +268,7 @@ void game_update(GameState *gs) {
 
     if (ate) {
         /* Snake grows: don't remove tail */
-        gs->food.active = 0;
+        gs->foods[eaten_idx].active = 0;
         gs->foods_eaten++;
         /* Score increments by level * 10 — computed via math.c mul */
         gs->score += my_mul(10, gs->level);
@@ -255,7 +276,7 @@ void game_update(GameState *gs) {
         /* Level up every 50 points — computed via math.c div */
         gs->level = my_div(gs->score, 50) + 1;
         if (gs->level > 10) gs->level = 10;
-        place_food(gs);
+        place_food(gs, eaten_idx);
     } else {
         /* Remove tail: walk to the node just before the tail */
         Segment *old_tail = gs->snake.tail;
@@ -293,21 +314,36 @@ void game_update(GameState *gs) {
  *   Row 26 : memory debug line
  * --------------------------------------------------------------- */
 void game_render(const GameState *gs) {
+    int field_x, field_y, field_w, field_h;
+    int hud_col;
     int i;
+    screen_update_layout();
+    field_x = screen_field_x();
+    field_y = screen_field_y();
+    field_w = screen_field_w();
+    field_h = screen_field_h();
+    hud_col = field_x - 1;
+    if (hud_col < 1) hud_col = 1;
     screen_clear();
 
     /* ---- Row 1: Title bar ---- */
-    screen_goto(1, 1);
+    screen_goto(hud_col, 1);
     screen_set_fg(36);
     screen_set_bold();
     screen_putstr(" SNAKE");
     screen_reset_color();
     screen_set_fg(90);
-    screen_putstr("  |  WASD/Arrows: Move  |  P: Pause  |  Q: Quit");
+    if (field_w >= 36) {
+        screen_putstr("  |  WASD/Arrows  P:Pause  Q:Quit");
+    } else if (field_w >= 24) {
+        screen_putstr("  |  Move  P:Pause  Q:Quit");
+    } else {
+        screen_putstr("  |  P:Pause Q:Quit");
+    }
     screen_reset_color();
 
-    /* Direction indicator — right-aligned at col 60 */
-    screen_goto(60, 1);
+    /* Direction indicator — right-aligned to field area */
+    screen_goto(field_x + field_w - 8, 1);
     screen_set_fg(93);
     screen_putstr("Dir:");
     if      (gs->snake.dx ==  1) screen_putstr(" -> ");
@@ -317,22 +353,26 @@ void game_render(const GameState *gs) {
     screen_reset_color();
 
     /* ---- Row 2: Thin separator ---- */
-    screen_goto(1, 2);
+    screen_goto(hud_col, 2);
     screen_set_fg(90);
-    for (i = 0; i < FIELD_W + 4; i++) screen_putchar('-');
+    for (i = 0; i < field_w + 2; i++) screen_putchar('-');
     screen_reset_color();
 
     /* ---- Game field border ---- */
     screen_set_fg(33);
-    screen_draw_border(FIELD_X - 1, FIELD_Y - 1, FIELD_W, FIELD_H);
+    screen_draw_border(field_x - 1, field_y - 1, field_w, field_h);
     screen_reset_color();
 
-    /* Render food — bright red @ */
-    if (gs->food.active) {
-        screen_goto(FIELD_X + gs->food.x, FIELD_Y + gs->food.y);
-        screen_set_fg(91);
-        screen_putchar('@');
-        screen_reset_color();
+    /* Render foods — bright red @ with blink effect. */
+    if ((gs->ticks / 5) % 2 == 0) {
+        int i;
+        for (i = 0; i < MAX_FOODS; i++) {
+            if (!gs->foods[i].active) continue;
+            screen_goto(field_x + gs->foods[i].x, field_y + gs->foods[i].y);
+            screen_set_fg(91);
+            screen_putchar('@');
+            screen_reset_color();
+        }
     }
 
     /* Render snake — bright green head 'O', green body 'o' */
@@ -340,7 +380,7 @@ void game_render(const GameState *gs) {
         Segment *cur = gs->snake.head;
         int first = 1;
         while (cur) {
-            screen_goto(FIELD_X + cur->x, FIELD_Y + cur->y);
+            screen_goto(field_x + cur->x, field_y + cur->y);
             if (first) {
                 screen_set_fg(92);
                 screen_set_bold();
@@ -356,51 +396,73 @@ void game_render(const GameState *gs) {
     }
 
     /* ---- Row below field: Stats panel ---- */
-    int score_row = FIELD_Y + FIELD_H + 2;
-    char sbuf[16], hbuf[16], lenbuf[8], fbuf[8];
+    int score_row = field_y + field_h + 2;
+    char sbuf[16], hbuf[16], lenbuf[8], fbuf[8], lbuf[8];
     my_itoa(gs->score,        sbuf);
     my_itoa(gs->high_score,   hbuf);
     my_itoa(gs->snake.length, lenbuf);
     my_itoa(gs->foods_eaten,  fbuf);
+    my_itoa(gs->lives,        lbuf);
 
-    screen_goto(FIELD_X, score_row);
-    screen_set_fg(97);
-    screen_putstr("Score:");
-    screen_set_fg(92);
-    screen_putstr(sbuf);
-    screen_reset_color();
-    screen_set_fg(97);
-    screen_putstr("  High:");
-    screen_set_fg(93);
-    screen_putstr(hbuf);
-    screen_reset_color();
-    screen_set_fg(97);
-    screen_putstr("  Len:");
-    screen_set_fg(95);
-    screen_putstr(lenbuf);
-    screen_reset_color();
-    screen_set_fg(97);
-    screen_putstr("  Food:");
-    screen_set_fg(91);
-    screen_putstr(fbuf);
-    screen_reset_color();
-
-    /* Lives — red hearts */
-    {
-        int j;
+    screen_goto(hud_col, score_row);
+    if (field_w >= 38) {
+        screen_set_fg(97);
+        screen_putstr("Score:");
+        screen_set_fg(92);
+        screen_putstr(sbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr("  High:");
+        screen_set_fg(93);
+        screen_putstr(hbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr("  Len:");
+        screen_set_fg(95);
+        screen_putstr(lenbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr("  Food:");
+        screen_set_fg(91);
+        screen_putstr(fbuf);
+        screen_reset_color();
         screen_set_fg(97);
         screen_putstr("  Lives:");
-        for (j = 0; j < gs->lives; j++) {
-            screen_set_fg(91);
-            screen_putstr(" \xe2\x99\xa5");  /* UTF-8 heart ♥ */
-        }
+        screen_set_fg(96);
+        screen_putstr(lbuf);
+        screen_reset_color();
+    } else {
+        screen_set_fg(97);
+        screen_putstr("S:");
+        screen_set_fg(92);
+        screen_putstr(sbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr(" H:");
+        screen_set_fg(93);
+        screen_putstr(hbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr(" L:");
+        screen_set_fg(95);
+        screen_putstr(lenbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr(" F:");
+        screen_set_fg(91);
+        screen_putstr(fbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr(" V:");
+        screen_set_fg(96);
+        screen_putstr(lbuf);
         screen_reset_color();
     }
 
     /* ---- Paused overlay — centred box ---- */
     if (gs->paused) {
-        int mid_col = FIELD_X + my_div(FIELD_W, 2) - 7;
-        int mid_row = FIELD_Y + my_div(FIELD_H, 2) - 1;
+        int mid_col = field_x + my_div(field_w, 2) - 7;
+        int mid_row = field_y + my_div(field_h, 2) - 1;
         screen_goto(mid_col, mid_row);
         screen_set_fg(93);
         screen_putstr("+---------------+");
@@ -414,7 +476,7 @@ void game_render(const GameState *gs) {
     }
 
     /* ---- Memory debug info ---- */
-    screen_goto(FIELD_X, score_row + 1);
+    screen_goto(hud_col, score_row + 1);
     screen_set_fg(90);
     screen_putstr("Mem:");
     char membuf[16];
@@ -447,13 +509,5 @@ int game_speed_delay(const GameState *gs) {
  * are explicitly tracked and freed here.
  * --------------------------------------------------------------- */
 void game_free(GameState *gs) {
-    Segment *cur = gs->snake.head;
-    while (cur) {
-        Segment *nxt = cur->next;
-        dealloc(cur);
-        cur = nxt;
-    }
-    gs->snake.head   = (void*)0;
-    gs->snake.tail   = (void*)0;
-    gs->snake.length = 0;
+    clear_snake(gs);
 }
