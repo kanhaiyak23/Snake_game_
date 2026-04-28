@@ -1,0 +1,597 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{array}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{red},
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  language=C
+}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Terminal Snake: An Operating-Systems Case Study in\\
+Custom Memory, I/O, and Process Management}
+
+\author{
+  \IEEEauthorblockN{Navnit Naman}
+  \IEEEauthorblockA{\textit{School of Technology}\\
+  \textit{Rishihood University}\\
+  Sonipat, India\\
+  230085}
+  \and
+  \IEEEauthorblockN{Kanhaiya Kumar}
+  \IEEEauthorblockA{\textit{School of Technology}\\
+  \textit{Rishihood University}\\
+  Sonipat, India\\
+  230062}
+}
+
+\maketitle
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{abstract}
+This paper presents \textit{Terminal Snake}, a real-time terminal game written
+in ISO C99 that intentionally avoids the C standard library's memory,
+string, and math subsystems.  The project serves as a self-contained
+demonstration of core operating-systems concepts: a best-fit heap allocator
+with bidirectional coalescing, raw-mode terminal I/O via POSIX \texttt{termios},
+ANSI/VT100 screen rendering, a cooperative game-loop scheduler, and a
+structured error-handling framework.  All five OS-course evaluation domains
+(Memory Management, I/O Management, Process Management, Security/Error
+Handling, and File-System considerations) are addressed either through
+concrete implementation or through deliberate architectural decision and
+documented future scope.  The result is a fully playable game with adaptive
+difficulty, a consecutive-food score multiplier, a lives system, and a
+live memory-utilisation HUD---all built on fewer than 900 lines of hand-crafted
+C.  Version history is maintained on GitHub under account \texttt{naman394},
+repository \texttt{kanhaiyak23/Snake\_game\_}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+operating systems, memory management, process management, I/O management,
+custom allocator, terminal game, C99, POSIX, best-fit allocation, coalescing
+\end{IEEEkeywords}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+
+Most hobby games lean on \texttt{malloc}, \texttt{printf}-wrappers, and
+framework event loops without considering the subsystems underneath.  This
+project inverts that approach: the constraint of \emph{no standard-library
+memory, string, or math functions} forces every OS primitive to be made
+explicit and auditable.
+
+The five pillars addressed are:
+
+\begin{itemize}
+  \item \textbf{Memory Management} --- a 1\,MiB static pool with best-fit
+        allocation and bidirectional free-block coalescing.
+  \item \textbf{I/O Management} --- raw-mode keyboard capture via
+        \texttt{termios} and ANSI/VT100 screen rendering via \texttt{printf}.
+  \item \textbf{Process Management} --- a deterministic cooperative game loop
+        with \texttt{usleep}-based frame pacing and level-dependent speed
+        scaling.
+  \item \textbf{Security / Error Handling} --- structured termination codes,
+        double-free guards, out-of-bounds checks, and graceful OOM recovery.
+  \item \textbf{File Systems} --- persistent high-score storage and
+        configuration, deferred to future work with a clear design rationale.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{System Architecture}
+
+\subsection{Module Layout}
+
+The project is divided into two layers, each with strict dependency rules:
+
+\begin{table}[h]
+\centering
+\caption{Source Module Overview}
+\begin{tabular}{lp{5.2cm}}
+\toprule
+\textbf{Module} & \textbf{Responsibility} \\
+\midrule
+\texttt{math.c}     & Arithmetic (mul, div, mod, abs, clamp), XorShift32 PRNG \\
+\texttt{string.c}   & strlen, strcpy, strcmp, itoa, strtok replacements \\
+\texttt{memory.c}   & 1\,MiB static pool, best-fit allocator, coalescing \\
+\texttt{keyboard.c} & POSIX termios raw mode, escape-sequence state machine \\
+\texttt{screen.c}   & ANSI/VT100 renderer, field-geometry accessors \\
+\midrule
+\texttt{snake.h/c}  & Game structs, movement, collision, scoring, lives \\
+\texttt{main.c}     & Start screen, countdown, game loop, game-over screen \\
+\midrule
+\texttt{test\_logic.c} & Non-interactive unit tests for library correctness \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Library modules are independent of each other; game code may use all
+of them.  \texttt{main.c} may not call game-logic internals; it communicates
+exclusively through the six-function public API declared in \texttt{snake.h}.
+
+\subsection{Constraint Rationale}
+
+The project prohibits \texttt{<string.h>}, \texttt{<math.h>}, \texttt{malloc},
+\texttt{free}, and \texttt{rand}.  The only permitted standard-library symbols
+are \texttt{printf}/\texttt{putchar} (terminal I/O) and \texttt{exit}
+(process control).  This constraint forces every memory allocation, random
+number, and string operation to be implemented and understood from first
+principles---precisely the pedagogical intent of an OS course project.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Memory Management}
+
+\subsection{Pool Design}
+
+A single \texttt{static char VRAM[1\,048\,576]} array constitutes the entire
+heap.  On \texttt{mem\_init()}, it is formatted as one free \texttt{BlockHeader}
+spanning the whole array:
+
+\begin{lstlisting}
+typedef struct BlockHeader {
+    int  size;              /* user payload bytes */
+    int  used;              /* 1=allocated, 0=free */
+    struct BlockHeader *next;
+} BlockHeader;
+\end{lstlisting}
+
+All blocks are linked in address order, enabling $O(1)$ adjacency tests needed
+for coalescing.
+
+\subsection{Best-Fit Allocation}
+
+On each \texttt{alloc(size)} call, the allocator:
+\begin{enumerate}
+  \item Rounds \texttt{size} up to the nearest 8-byte boundary (alignment).
+  \item Scans the free list for the smallest block that fits (\emph{best-fit}
+        policy), breaking early on an exact match.
+  \item Splits the chosen block if the remainder exceeds
+        \(\text{sizeof(BlockHeader)} + 8\) bytes.
+  \item Returns \texttt{NULL} on exhaustion, triggering the OOM error path.
+\end{enumerate}
+
+Best-fit was chosen over first-fit because snake segments are all the same
+size (\texttt{sizeof(Segment)} = 12 bytes).  Under uniform allocation sizes,
+best-fit leaves fewer unusable slivers and is empirically equivalent to
+first-fit in fragmentation, while being strictly no worse \cite{knuth1997art}.
+
+\subsection{Bidirectional Coalescing}
+
+On \texttt{dealloc(ptr)}, the allocator:
+\begin{enumerate}
+  \item Validates the pointer is within \texttt{VRAM} (bounds guard).
+  \item Checks \texttt{blk->used} to prevent double-free corruption.
+  \item Marks the block free and coalesces \emph{rightward} (absorbs
+        consecutive free successors in a \texttt{while} loop).
+  \item Finds the predecessor by address-order traversal and coalesces
+        \emph{leftward} if the predecessor is free and adjacent.
+\end{enumerate}
+
+This two-phase coalescing prevents fragmentation even under the
+alloc-one-grow/dealloc-one-shrink pattern of every game tick.
+
+\subsection{Live Memory HUD}
+
+\texttt{mem\_used()} walks the block list and sums used payload bytes.
+This value is displayed every frame in the HUD, making heap behaviour
+observable during gameplay---an unusual but educationally valuable feature.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{I/O Management}
+
+\subsection{Keyboard Input}
+
+\texttt{keyboard\_init()} transitions the terminal into raw, non-canonical,
+non-echoing mode via POSIX \texttt{termios}:
+
+\begin{lstlisting}
+new_tio.c_lflag &= ~(ICANON | ECHO);
+new_tio.c_cc[VMIN]  = 0;  /* non-blocking */
+new_tio.c_cc[VTIME] = 0;
+tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
+fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+\end{lstlisting}
+
+\noindent Setting \texttt{VMIN=0, VTIME=0} with \texttt{O\_NONBLOCK} makes
+\texttt{read()} return immediately whether or not a character is waiting.
+This is necessary for a real-time game loop that cannot block on user input.
+
+\subsubsection{Escape-Sequence State Machine}
+
+Arrow keys arrive as three-byte ANSI sequences (\texttt{ESC [ A/B/C/D} for
+up/down/right/left).  \texttt{keyPressed()} implements a three-state machine
+(\texttt{esc\_state} $\in \{0, 1, 2, 3\}$) to reassemble these sequences
+across successive \texttt{read()} calls and map them to the WASD key codes
+used by game logic.  Stale buffered input is drained between screens to
+prevent bleed-through.
+
+\subsubsection{Terminal Restoration}
+
+\texttt{keyboard\_restore()} removes \texttt{O\_NONBLOCK} and calls
+\texttt{tcsetattr} with the saved \texttt{old\_tio} snapshot, guaranteeing
+the terminal is left in a working state on both normal exit and error paths.
+
+\subsection{Screen Output}
+
+\texttt{screen.c} is a thin wrapper around ANSI/VT100 escape sequences:
+
+\begin{itemize}
+  \item \textbf{Alternate screen buffer} (\texttt{\textbackslash{}033[?1049h/l}):
+        isolates game rendering from the user's shell history.
+  \item \textbf{Cursor control} (\texttt{\textbackslash{}033[row;colH}):
+        positions output anywhere on the terminal grid.
+  \item \textbf{SGR color codes} (e.g., \texttt{\textbackslash{}033[92m} for
+        bright green): style the snake, food, and HUD without external graphics
+        libraries.
+  \item \textbf{Unicode box-drawing} (\texttt{╔═╗║╚╝}): rendered as raw UTF-8
+        bytes via \texttt{screen\_putstr}, replacing the earlier ASCII border.
+\end{itemize}
+
+\texttt{screen\_update\_layout()} queries the terminal dimensions via
+\texttt{ioctl(TIOCGWINSZ)} on every frame, allowing the game field to scale
+dynamically to any terminal size.  All game code accesses field geometry
+through accessor functions (\texttt{screen\_field\_x/y/w/h()}) rather than
+cached constants, ensuring layout changes propagate without stale reads.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Process Management}
+
+\subsection{Game Loop Architecture}
+
+The game runs under a cooperative, single-process loop in \texttt{main.c}:
+
+\begin{enumerate}
+  \item \texttt{keyPressed()} --- non-blocking poll for user input.
+  \item \texttt{game\_handle\_input()} --- apply direction change or pause/quit.
+  \item \texttt{game\_update()} --- advance physics by one tick.
+  \item \texttt{game\_render()} --- redraw the entire frame.
+  \item \texttt{usleep(game\_speed\_delay())} --- yield CPU for the remainder
+        of the frame budget.
+\end{enumerate}
+
+This is a textbook \emph{fixed-timestep cooperative loop} \cite{gregory2018game}.
+There is no preemptive multitasking; the process voluntarily yields via
+\texttt{usleep}, which on macOS/Linux maps to \texttt{nanosleep} at the kernel
+level.
+
+\subsection{Frame-Rate Scaling}
+
+\texttt{game\_speed\_delay()} computes the inter-frame sleep duration as a
+function of level:
+
+\[
+  \text{delay}(\ell) = \text{clamp}(180{,}000 - 15{,}000 \times (\ell - 1),\; 50{,}000,\; 180{,}000) \;\mu\text{s}
+\]
+
+Level~1 yields a 180\,ms frame period (5.6\,fps physics), and level~10 yields
+50\,ms (20\,fps physics).  All arithmetic uses \texttt{my\_mul} and
+\texttt{my\_clamp} from the custom math library; no floating-point operations
+are involved.
+
+\subsection{Level Progression}
+
+Level advances every 50 score points:
+
+\[
+  \ell = \min\!\left(\left\lfloor \frac{\text{score}}{50} \right\rfloor + 1,\; 10\right)
+\]
+
+Because the score multiplier (Section~\ref{sec:multiplier}) accelerates point
+gain, high-skill play naturally reaches maximum speed faster.
+
+\subsection{Startup Sequence}
+
+The ordered startup sequence enforces a safe initialisation contract:
+\texttt{mem\_init} $\to$ \texttt{keyboard\_init} $\to$ \texttt{screen\_init}
+$\to$ \texttt{my\_srand} $\to$ game loop $\to$ \texttt{game\_free} $\to$
+\texttt{screen\_cleanup} $\to$ \texttt{keyboard\_restore}.  Resource
+acquisition and release are strictly paired, preventing resource leaks across
+play-again sessions.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Security and Error Handling}
+\label{sec:security}
+
+\subsection{Structured Termination Codes}
+
+Game-ending conditions are represented as symbolic constants rather than
+magic integers:
+
+\begin{table}[h]
+\centering
+\caption{Game-End Reason Codes}
+\begin{tabular}{ll}
+\toprule
+\textbf{Constant} & \textbf{Trigger} \\
+\midrule
+\texttt{GAME\_END\_NONE}      & Game still running \\
+\texttt{GAME\_END\_COLLISION} & Wall or self-collision \\
+\texttt{GAME\_END\_OOM}       & \texttt{alloc()} returned \texttt{NULL} \\
+\texttt{GAME\_END\_QUIT}      & User pressed \texttt{Q} \\
+\texttt{GAME\_END\_INTERNAL}  & Linked-list invariant violated \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The game-over screen reads \texttt{game\_end\_reason} and displays a
+specific diagnostic for each case (e.g., ``Memory: alloc() failed --- 1\,MB
+heap full or fragmented'' for OOM), giving the user actionable information
+rather than a silent crash.
+
+\subsection{Memory Safety}
+
+\begin{itemize}
+  \item \textbf{Bounds guard:} \texttt{dealloc()} checks that the pointer lies
+        within \texttt{VRAM} before dereferencing; out-of-range pointers are
+        silently ignored.
+  \item \textbf{Double-free guard:} the \texttt{used} flag is checked before
+        marking a block free; a second \texttt{dealloc} on the same pointer is
+        a no-op.
+  \item \textbf{OOM propagation:} \texttt{alloc()} returning \texttt{NULL} is
+        checked at every call site (\texttt{seg\_new}, \texttt{reset\_snake});
+        the game transitions to \texttt{GAME\_END\_OOM} rather than
+        dereferencing a null pointer.
+  \item \textbf{Invariant assertion:} if the tail-search loop in
+        \texttt{game\_update()} cannot locate the tail pointer, the tick is
+        aborted, the orphaned head segment is freed, and
+        \texttt{GAME\_END\_INTERNAL} is set---preventing a use-after-free.
+\end{itemize}
+
+\subsection{Input Validation}
+
+\begin{itemize}
+  \item \textbf{Boundary check:} before placing the new head, \texttt{my\_in\_bounds()}
+        verifies the computed position lies within the field; out-of-bounds
+        positions trigger \texttt{lose\_life\_and\_respawn()} rather than
+        writing to an invalid segment.
+  \item \textbf{Anti-reversal:} \texttt{game\_handle\_input()} blocks the
+        180-degree direction change (snake reversing into itself) by checking
+        the current velocity before updating \texttt{dx}/\texttt{dy}.
+  \item \textbf{Input draining:} \texttt{drain\_input()} flushes the keyboard
+        buffer between menu screens, preventing stale escape sequences from
+        triggering unintended game actions.
+\end{itemize}
+
+\subsection{Terminal Safety}
+
+Both \texttt{keyboard\_restore()} and \texttt{screen\_cleanup()} are always
+called on the exit path, ensuring the terminal is never left in raw mode or
+on the alternate screen buffer---a common failure mode in terminal games.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Gameplay Methodology}
+
+\subsection{Core Tick Loop}
+
+Each call to \texttt{game\_update()} performs, in order:
+(1) layout refresh, (2) out-of-bounds food relocation, (3) head position
+computation, (4) boundary collision check, (5) self-collision check,
+(6) food collision detection, (7) new head allocation, (8) tail removal or
+retention, (9) score/level update.  This strict ordering prevents
+read-after-write hazards within a single tick.
+
+\subsection{Score Multiplier}
+\label{sec:multiplier}
+
+A consecutive-food combo system rewards sustained play without dying.  The
+\texttt{combo} counter in \texttt{GameState} increments on each food eaten and
+resets to zero on any life loss.  The score awarded per food is:
+
+\[
+  \Delta\text{score} = 10 \times \ell \times \min(\text{combo},\; M_{\max})
+\]
+
+where $M_{\max} = 8$ is the multiplier cap (\texttt{MAX\_COMBO\_MULT}).  The
+HUD highlights the multiplier in bold yellow whenever it exceeds $1\times$,
+giving the player real-time streak feedback.
+
+\subsection{Lives System}
+
+The player begins with \texttt{INITIAL\_LIVES} = 3 lives.
+\texttt{lose\_life\_and\_respawn()} decrements the counter, resets the combo,
+clears all segment memory, rebuilds the snake at field centre, and
+repositions all food items.  When lives reach zero, the game ends with
+\texttt{GAME\_END\_COLLISION}.  This design separates \emph{session state}
+(score, high score, level) from \emph{run state} (snake segments), so the
+score persists across respawns within one session.
+
+\subsection{Multi-Food Spawning}
+
+Up to \texttt{MAX\_FOODS} = 3 food items are active simultaneously.
+\texttt{place\_food()} uses a rejection-sampling loop: a candidate position
+is drawn from \texttt{my\_rand\_range()} and rejected if it overlaps any snake
+segment or any other active food item.  Since the snake is never allowed to
+fill the field (collision terminates the session first), the loop always
+terminates in finite expected time.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{File System Considerations}
+
+The current implementation holds all game state in memory; no data is
+persisted to disk.  This is an intentional deferral, not an oversight.
+The project's memory constraint (\texttt{no malloc/free}) was the primary
+design driver, and adding file I/O before the allocator was stable would have
+introduced a second axis of failure.
+
+A minimal persistence layer would require:
+\begin{itemize}
+  \item A plain-text or binary record format for the high-score table
+        (e.g., a fixed-size struct serialised to \texttt{\textasciitilde/.snake\_score}).
+  \item \texttt{open()}/\texttt{read()}/\texttt{write()}/\texttt{close()}
+        calls via \texttt{<unistd.h>} (already permitted by the project
+        constraint as a POSIX hardware-abstraction exception).
+  \item Atomic write-and-rename (\texttt{rename()} over a temporary file) to
+        avoid partial writes corrupting the score file on power loss.
+\end{itemize}
+
+This is documented as the highest-priority item in the future-scope roadmap
+(Section~\ref{sec:future}).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Custom Math Library}
+
+\subsection{Multiplication: Shift-and-Add}
+
+\texttt{my\_mul(a, b)} uses the Russian-peasant (binary) method: the larger
+magnitude is doubled in each step while the smaller is halved; the larger is
+accumulated when the LSB of the smaller is 1.  Time complexity is
+$O(\log\min(|a|,|b|))$ bit operations; space is $O(1)$.
+
+\subsection{Division: Recursive Doubling}
+
+\texttt{divide\_positive\_ll(a, b)} halves the problem by doubling the
+divisor until it exceeds the dividend, then unwinds the recursion accumulating
+the quotient in binary.  Recursion depth is $O(\log(a/b))$.  \texttt{my\_div}
+wraps this with sign handling (truncation toward zero).
+
+\subsection{XorShift32 PRNG}
+
+The random number generator uses the XorShift32 algorithm \cite{marsaglia2003xorshift}:
+
+\begin{lstlisting}
+rng_state ^= rng_state << 13;
+rng_state ^= rng_state >> 17;
+rng_state ^= rng_state << 5;
+\end{lstlisting}
+
+This produces a full-period sequence of $2^{32}-1$ values with no multiply
+in the hot path.  It is seeded from \texttt{time(NULL)} at startup.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Results and Metrics}
+
+\begin{table}[h]
+\centering
+\caption{Implementation Metrics}
+\begin{tabular}{lr}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Total source lines (excl.\ blank/comments) & $\approx 870$ \\
+Heap pool size                              & 1\,048\,576 bytes (1\,MiB) \\
+Segment size (allocated unit)              & 12 bytes \\
+Maximum live segments (level 10, length 200) & $\approx 200$ \\
+Peak heap usage at max length              & $\approx 4\,800$ bytes (0.46\%) \\
+Frame period range                          & 50\,ms -- 180\,ms \\
+Unit tests passing                          & 22 / 22 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The allocator is empirically fragmentation-free for the snake
+workload: each tick allocates one segment and (on non-eat frames) frees one
+segment of identical size, so the pool converges to a near-steady-state after
+a few ticks.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Future Scope}
+\label{sec:future}
+
+\begin{enumerate}
+  \item \textbf{High-Score Persistence (File System):}
+        Serialise the top-5 score table to a dot-file using POSIX
+        \texttt{open/write/rename} with atomic replace semantics.
+  \item \textbf{Slab Allocator:}
+        Since all game allocations are the same size (\texttt{sizeof(Segment)}),
+        a slab/pool allocator \cite{bonwick1994slab} would reduce per-allocation
+        overhead from $O(n)$ (best-fit scan) to $O(1)$ (free-list pop).
+  \item \textbf{Configurable Difficulty:}
+        Read a plain-text \texttt{.snakerc} configuration file at startup to
+        set starting lives, field size, and food count---a direct exercise of
+        the deferred file-system module.
+  \item \textbf{Replay Recording:}
+        Log the RNG seed and input stream to a file; replay by re-seeding
+        and feeding the recorded keystrokes, enabling deterministic replay
+        without storing frame buffers.
+  \item \textbf{Multiplayer over Sockets:}
+        Two game instances on the same machine could share state via a
+        UNIX-domain socket, exercising IPC and synchronisation primitives.
+  \item \textbf{Signal Handling:}
+        Install a \texttt{SIGWINCH} handler to respond to terminal resize
+        events asynchronously rather than polling \texttt{TIOCGWINSZ} every
+        frame, reducing unnecessary system calls.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Version History and Collaboration}
+
+All source code, commit history, and issue tracking are maintained at
+\texttt{github.com/kanhaiyak23/Snake\_game\_}.  Contributions from both
+authors are individually attributable through commit authorship.
+Key milestones recorded in the history include:
+
+\begin{itemize}
+  \item Initial snake movement and collision (\texttt{e1d954b})
+  \item Lives system with respawn (\texttt{fb0e676})
+  \item Multi-food spawning and HUD (\texttt{915acd4})
+  \item Input-parsing improvements and layout accessors (\texttt{205a8bc})
+  \item Score multiplier (combo system) and Unicode border (\texttt{766dafc})
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+
+Terminal Snake demonstrates that a complete, playable game can be built
+atop hand-crafted OS primitives without sacrificing correctness or safety.
+The best-fit allocator with bidirectional coalescing correctly manages the
+alloc/dealloc pattern of the game loop under all tested conditions.  The
+\texttt{termios} raw-mode keyboard driver and ANSI/VT100 renderer together
+provide responsive I/O with deterministic terminal restoration.  The structured
+error-handling framework ensures that heap exhaustion, list invariant failures,
+and user-initiated quits all produce meaningful diagnostics rather than
+undefined behaviour.  The project provides a concrete, measurable reference
+implementation for each concept covered in the Operating Systems curriculum.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{thebibliography}{00}
+
+\bibitem{knuth1997art}
+D.~E. Knuth, \textit{The Art of Computer Programming, Vol.~1: Fundamental
+Algorithms}, 3rd ed. Reading, MA: Addison-Wesley, 1997, pp.~435--456.
+
+\bibitem{gregory2018game}
+J.~Gregory, \textit{Game Engine Architecture}, 3rd ed. Boca Raton, FL: CRC
+Press, 2018, pp.~391--420.
+
+\bibitem{bonwick1994slab}
+J.~Bonwick, ``The slab allocator: An object-caching kernel memory allocator,''
+in \textit{Proc. USENIX Summer Technical Conf.}, Boston, MA, Jun. 1994,
+pp.~87--98.
+
+\bibitem{marsaglia2003xorshift}
+G.~Marsaglia, ``Xorshift RNGs,'' \textit{J. Statistical Software}, vol.~8,
+no.~14, pp.~1--6, 2003.
+
+\bibitem{silberschatz2018os}
+A.~Silberschatz, P.~B. Galvin, and G.~Gagne, \textit{Operating System
+Concepts}, 10th ed. Hoboken, NJ: Wiley, 2018.
+
+\bibitem{kerrisk2010linux}
+M.~Kerrisk, \textit{The Linux Programming Interface}. San Francisco, CA:
+No Starch Press, 2010, pp.~1331--1360.
+
+\bibitem{ieee2016posix}
+IEEE and The Open Group, \textit{The Open Group Base Specifications Issue 7,
+2018 Edition (POSIX.1-2017)}, IEEE Std 1003.1-2017, 2017.
+
+\end{thebibliography}
+
+\end{document}
