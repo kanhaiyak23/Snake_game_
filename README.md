@@ -11,14 +11,18 @@ subsystem is implemented as one of five custom libraries.
 | Feature | Details |
 |---------|---------|
 | Smooth gameplay | Non-blocking keyboard input, configurable frame rate |
+| Robust input decoding | Stateful escape-sequence parsing for arrow keys in raw mode |
 | 10 difficulty levels | Speed increases every 50 points; level 10 is maximum |
 | Level progress bar | Live bar shows exact progress toward next level |
 | Persistent high score | Best score carried across all games in a session |
-| Foods-eaten counter | Running total of food items consumed |
+| Multiple food items | `MAX_FOODS` active foods at once (default: 3) |
+| Blinking food | Food glyphs blink to improve visual contrast |
+| Multi-life gameplay | `INITIAL_LIVES` (default: 3) with respawn on collision |
+| Foods-eaten counter | Running total across all foods consumed |
 | Start screen | ASCII-art logo, controls reference, tips |
 | Countdown | 3-2-1-GO! before each game so the player is ready |
 | Pause/resume | Press `P` at any time during play |
-| Game-over screen | Final stats (score, high score, length, food), **Play Again** or **Quit** |
+| Game-over screen | Final stats (score, high score, length, food, lives left), **Play Again** or **Quit** |
 | New-high-score alert | Celebrated on the game-over screen if you beat your best |
 | Memory debug readout | Live byte count from the custom pool allocator |
 | Zero leaks | Every `Segment` is `dealloc()`'d on game over |
@@ -186,9 +190,11 @@ Pure-ANSI renderer (`printf` / `putchar` only):
 | `screen_set_bold()` | Bold text (`ESC[1m`) |
 | `screen_reset_color()` | `ESC[0m` — reset all SGR attributes |
 | `screen_flush()` | `fflush(stdout)` |
+| `screen_update_layout()` | Refresh active field geometry from layout policy |
+| `screen_field_x/y/w/h()` | Read current field origin and size |
 
-Field layout constants (`FIELD_X`, `FIELD_Y`, `FIELD_W`, `FIELD_H`) live here so every
-module uses the same coordinate system.
+Field layout defaults (`FIELD_X`, `FIELD_Y`, `FIELD_W`, `FIELD_H`) live here, and
+game code reads active geometry through `screen_field_x/y/w/h()`.
 
 ### `keyboard.c` / `keyboard.h`
 
@@ -196,7 +202,8 @@ Uses POSIX `termios` to switch to raw, non-blocking mode:
 - `keyboard_init()` — save terminal state, enter raw mode, set `O_NONBLOCK`
 - `keyboard_restore()` — restore original `termios` settings
 - `keyPressed()` — `read(STDIN_FILENO, ...)` — returns char or `0` if no key
-- Arrow keys are decoded from their three-byte escape sequences to `w/s/a/d`
+- Arrow keys are decoded with a small state machine (supports `ESC [ A/B/C/D` and `ESC O A/B/C/D`)
+- Buffered input is drained per frame and the latest valid key is applied for responsiveness
 
 ---
 
@@ -204,9 +211,14 @@ Uses POSIX `termios` to switch to raw, non-blocking mode:
 
 | Event | Score gain |
 |-------|-----------|
-| Eat one food item | `10 × current_level` points |
+| Eat any active food item | `10 × current_level` points |
 | Level threshold | Every 50 cumulative points → level up |
 | Max level | Level 10 (speed floors at 50 ms/frame) |
+
+Lives system:
+- Start with `INITIAL_LIVES` (default `3`)
+- Wall/self collision consumes one life and respawns the snake
+- Session ends when lives reach `0` (or quit / OOM / internal error)
 
 Frame delay formula (via `math.c`, no hard-coded lookup):
 
