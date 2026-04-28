@@ -240,7 +240,10 @@ static int show_game_over_screen(int score, int high_score,
         screen_reset_color();
     }
 
-    /* ---- Stats ---- */
+    /* ---- Stats ----
+     * Snapshot values are passed in from main loop before game_free(),
+     * so this screen can safely display final run data.
+     */
     char sbuf[16], hbuf[16], lenbuf[16], fbuf[16], lbuf[16];
     my_itoa(score,  sbuf);
     my_itoa(high_score, hbuf);
@@ -369,7 +372,7 @@ int main(void) {
             usleep((unsigned int)game_speed_delay(&gs));
         }
 
-        /* Capture stats before freeing memory */
+        /* Capture stats before freeing memory (game_free clears snake nodes). */
         int final_score  = gs.score;
         int final_high   = gs.high_score;
         int final_length = gs.snake.length;

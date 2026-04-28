@@ -39,6 +39,7 @@ static Segment *seg_new(int x, int y) {
 
 /* Build/reset snake to starting position; keep score/lives unchanged. */
 static int reset_snake(GameState *gs) {
+    /* Spawn the snake at field center, 3 segments long, facing right. */
     int start_x = my_div(screen_field_w(), 2);
     int start_y = my_div(screen_field_h(), 2);
     Segment *head = seg_new(start_x,     start_y);
@@ -76,6 +77,7 @@ static void clear_snake(GameState *gs) {
 
 /* Lose one life and respawn; returns 1 if game should continue. */
 static int lose_life_and_respawn(GameState *gs) {
+    /* Last life consumed -> end this run with collision reason. */
     if (gs->lives <= 1) {
         gs->lives = 0;
         gs->game_over = 1;
@@ -83,6 +85,7 @@ static int lose_life_and_respawn(GameState *gs) {
         return 0;
     }
 
+    /* Still has lives: decrement, rebuild snake, and refresh food set. */
     gs->lives--;
     clear_snake(gs);
     if (!reset_snake(gs)) {
@@ -109,7 +112,7 @@ static void place_food(GameState *gs, int food_idx) {
         int fx = my_rand_range(0, field_w);
         int fy = my_rand_range(0, field_h);
 
-        /* Ensure the position is not on any segment */
+        /* Rule 1: do not place food on any snake segment. */
         ok = 1;
         Segment *cur = gs->snake.head;
         while (cur) {
@@ -117,6 +120,7 @@ static void place_food(GameState *gs, int food_idx) {
             cur = cur->next;
         }
         if (ok) {
+            /* Rule 2: do not overlap with other active food items. */
             int i;
             for (i = 0; i < MAX_FOODS; i++) {
                 if (i != food_idx && gs->foods[i].active &&
@@ -127,6 +131,7 @@ static void place_food(GameState *gs, int food_idx) {
             }
         }
         if (ok) {
+            /* Commit this food slot when both placement rules pass. */
             gs->foods[food_idx].x = fx;
             gs->foods[food_idx].y = fy;
             gs->foods[food_idx].active = 1;
@@ -164,6 +169,7 @@ void game_init(GameState *gs, int prev_high_score) {
     gs->game_end_reason = GAME_END_NONE;
 
     {
+        /* Initialize all food slots so multiple foods are active from start. */
         int i;
         for (i = 0; i < MAX_FOODS; i++) place_food(gs, i);
     }
@@ -205,6 +211,7 @@ void game_update(GameState *gs) {
     if (gs->game_over || gs->paused) return;
     screen_update_layout();
     {
+        /* If layout changes, ensure existing foods stay inside bounds. */
         int i;
         for (i = 0; i < MAX_FOODS; i++) {
             if (!my_in_bounds(gs->foods[i].x, gs->foods[i].y,
@@ -244,6 +251,7 @@ void game_update(GameState *gs) {
     int ate = 0;
     int eaten_idx = -1;
     {
+        /* Collision with any active food counts as an eat event. */
         int i;
         for (i = 0; i < MAX_FOODS; i++) {
             if (gs->foods[i].active &&
@@ -267,7 +275,7 @@ void game_update(GameState *gs) {
     gs->snake.length++;
 
     if (ate) {
-        /* Snake grows: don't remove tail */
+        /* Eat path: keep tail (grow), update score/level, respawn eaten slot. */
         gs->foods[eaten_idx].active = 0;
         gs->foods_eaten++;
         /* Score increments by level * 10 — computed via math.c mul */
@@ -278,7 +286,7 @@ void game_update(GameState *gs) {
         if (gs->level > 10) gs->level = 10;
         place_food(gs, eaten_idx);
     } else {
-        /* Remove tail: walk to the node just before the tail */
+        /* Normal move path: advance head and remove old tail segment. */
         Segment *old_tail = gs->snake.tail;
         Segment *prev     = gs->snake.head;
         while (prev->next && prev->next != old_tail) prev = prev->next;
@@ -395,7 +403,10 @@ void game_render(const GameState *gs) {
         }
     }
 
-    /* ---- Row below field: Stats panel ---- */
+    /* ---- Row below field: Stats panel ----
+     * Wide field -> full labels.
+     * Narrow field -> compact labels to avoid overflow.
+     */
     int score_row = field_y + field_h + 2;
     char sbuf[16], hbuf[16], lenbuf[8], fbuf[8], lbuf[8];
     my_itoa(gs->score,        sbuf);

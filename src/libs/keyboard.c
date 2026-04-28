@@ -64,10 +64,12 @@ void keyboard_restore(void) {
 char keyPressed(void) {
     char c = 0;
     char last_key = 0;
+    /* Drain all currently buffered bytes and keep the newest valid action. */
     while (read(STDIN_FILENO, &c, 1) > 0) {
         if (esc_state == 0) {
             if (c == '\033') { esc_state = 1; continue; }
             if (c >= 'A' && c <= 'Z') c = (char)(c + ('a' - 'A'));
+            /* Plain key path: WASD/P/Q (case-insensitive). */
             last_key = c;
             continue;
         }
@@ -87,7 +89,7 @@ char keyPressed(void) {
             continue;
         }
 
-        /* esc_state == 2 or 3 -> expect final arrow byte */
+        /* ESC sequence complete: map terminal arrow byte to movement key. */
         if (esc_state == 2 || esc_state == 3) {
             esc_state = 0;
             if (c == 'A') { last_key = KEY_UP;    continue; }  /* ↑ */
