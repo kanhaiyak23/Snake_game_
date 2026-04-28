@@ -127,28 +127,27 @@ void screen_show_cursor(void) {
  * is (w+2) × (h+2).
  * --------------------------------------------------------------- */
 void screen_draw_border(int x, int y, int w, int h) {
-    int i;
+    int i, row;
 
-    /* Top edge */
+    /* Top edge: ╔═══╗ */
     screen_goto(x, y);
-    screen_putchar('+');
-    for (i = 0; i < w; i++) screen_putchar('-');
-    screen_putchar('+');
+    screen_putstr("\xe2\x95\x94");              /* ╔ */
+    for (i = 0; i < w; i++) screen_putstr("\xe2\x95\x90"); /* ═ */
+    screen_putstr("\xe2\x95\x97");              /* ╗ */
 
-    /* Side edges */
-    int row;
+    /* Side edges: ║ */
     for (row = 1; row <= h; row++) {
         screen_goto(x, y + row);
-        screen_putchar('|');
+        screen_putstr("\xe2\x95\x91");          /* ║ */
         screen_goto(x + w + 1, y + row);
-        screen_putchar('|');
+        screen_putstr("\xe2\x95\x91");          /* ║ */
     }
 
-    /* Bottom edge */
+    /* Bottom edge: ╚═══╝ */
     screen_goto(x, y + h + 1);
-    screen_putchar('+');
-    for (i = 0; i < w; i++) screen_putchar('-');
-    screen_putchar('+');
+    screen_putstr("\xe2\x95\x9a");              /* ╚ */
+    for (i = 0; i < w; i++) screen_putstr("\xe2\x95\x90"); /* ═ */
+    screen_putstr("\xe2\x95\x9d");              /* ╝ */
 }
 
 /* ---------------------------------------------------------------

@@ -377,34 +377,45 @@ void game_render(const GameState *gs) {
     screen_draw_border(field_x - 1, field_y - 1, field_w, field_h);
     screen_reset_color();
 
-    /* Render foods — bright red @ with blink effect. */
-    if ((gs->ticks / 5) % 2 == 0) {
-        int i;
-        for (i = 0; i < MAX_FOODS; i++) {
-            if (!gs->foods[i].active) continue;
-            screen_goto(field_x + gs->foods[i].x, field_y + gs->foods[i].y);
-            screen_set_fg(91);
-            screen_putchar('@');
-            screen_reset_color();
+    /* Render foods — per-slot color, blink faster when combo is active. */
+    {
+        static const int food_colors[MAX_FOODS] = {91, 93, 96}; /* red, yellow, cyan */
+        int blink_div = (gs->combo >= 3) ? 2 : 5;
+        if ((gs->ticks / blink_div) % 2 == 0) {
+            int i;
+            for (i = 0; i < MAX_FOODS; i++) {
+                if (!gs->foods[i].active) continue;
+                screen_goto(field_x + gs->foods[i].x, field_y + gs->foods[i].y);
+                screen_set_fg(food_colors[i]);
+                screen_set_bold();
+                screen_putchar('@');
+                screen_reset_color();
+            }
         }
     }
 
-    /* Render snake — bright green head 'O', green body 'o' */
+    /* Render snake — gradient: bright head → green body → dark tail. */
     {
         Segment *cur = gs->snake.head;
-        int first = 1;
+        int idx = 0;
+        int tail_start = gs->snake.length - gs->snake.length / 4;
         while (cur) {
             screen_goto(field_x + cur->x, field_y + cur->y);
-            if (first) {
-                screen_set_fg(92);
-                screen_set_bold();
+            if (idx == 0) {
+                screen_set_fg(92); screen_set_bold();
                 screen_putchar('O');
-                first = 0;
-            } else {
+            } else if (idx < 4) {
+                screen_set_fg(92);
+                screen_putchar('o');
+            } else if (idx < tail_start) {
                 screen_set_fg(32);
+                screen_putchar('o');
+            } else {
+                screen_set_fg(90);
                 screen_putchar('o');
             }
             screen_reset_color();
+            idx++;
             cur = cur->next;
         }
     }
@@ -427,7 +438,13 @@ void game_render(const GameState *gs) {
     if (field_w >= 38) {
         screen_set_fg(97);
         screen_putstr("Score:");
-        screen_set_fg(92);
+        /* Flash score yellow when a combo streak is active */
+        if (gs->combo >= 2) {
+            screen_set_fg((gs->ticks / 3) % 2 == 0 ? 93 : 97);
+            screen_set_bold();
+        } else {
+            screen_set_fg(92);
+        }
         screen_putstr(sbuf);
         screen_reset_color();
         screen_set_fg(97);
