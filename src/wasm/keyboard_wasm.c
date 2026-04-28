@@ -20,6 +20,8 @@ void wasm_push_key(int js_keycode) {
         case 68: case 39: key_buf = KEY_RIGHT; break; /* D / ArrowRight */
         case 80:          key_buf = KEY_PAUSE; break; /* P              */
         case 81:          key_buf = KEY_QUIT;  break; /* Q              */
+        case 32:          key_buf = ' ';       break; /* Space          */
+        case 13:          key_buf = '\r';      break; /* Enter          */
         default: break;
     }
 }
