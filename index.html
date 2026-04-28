@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0a0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', Courier, monospace;
+      color: #eee;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    h1 {
+      color: #50fa7b;
+      font-size: 1.7rem;
+      letter-spacing: 0.35em;
+      margin-bottom: 10px;
+      text-shadow: 0 0 30px #50fa7b55;
+    }
+
+    /* Canvas + overlays share this container */
+    #field {
+      position: relative;
+      display: inline-block;
+      line-height: 0;
+    }
+
+    #game {
+      display: block;
+      border: 2px solid #22222e;
+      border-bottom: none;
+    }
+
+    /* ── HUD ──────────────────────────────────────────── */
+    #hud {
+      background: #0e0e18;
+      border: 2px solid #22222e;
+      border-top: 1px solid #1a1a28;
+      padding: 9px 18px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      width: 100%;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .stat-lbl {
+      color: #444;
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      margin-bottom: 2px;
+    }
+    .stat-val { font-size: 0.95rem; font-weight: bold; }
+
+    .c-green  { color: #50fa7b; }
+    .c-yellow { color: #f1fa8c; }
+    .c-cyan   { color: #8be9fd; }
+    .c-red    { color: #ff5555; }
+    .c-purple { color: #bd93f9; }
+    .c-orange { color: #ffb86c; }
+    .c-combo  { color: #f1fa8c; text-shadow: 0 0 8px #f1fa8c88; }
+    .c-dim    { color: #444; }
+
+    #bar-wrap { flex: 1; }
+    #bar-lbl {
+      color: #444;
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      margin-bottom: 5px;
+    }
+    #bar-bg {
+      background: #1e1e2e;
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #50fa7b, #8be9fd);
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.12s ease;
+    }
+
+    /* ── Overlays ────────────────────────────────────── */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: rgba(8, 8, 15, 0.93);
+    }
+    .overlay.hidden { display: none; }
+
+    .ovl-title {
+      font-size: 2.1rem;
+      font-weight: bold;
+      letter-spacing: 0.2em;
+    }
+    .ovl-sub {
+      color: #444;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+    }
+
+    .ctrl-box {
+      border: 1px solid #1e1e2e;
+      padding: 10px 22px;
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 5px 12px;
+      font-size: 0.76rem;
+    }
+    .ctrl-key  { color: #8be9fd; }
+    .ctrl-desc { color: #666; }
+
+    .tip { color: #444; font-size: 0.7rem; }
+
+    .btn {
+      background: transparent;
+      border: 1.5px solid currentColor;
+      color: #50fa7b;
+      font-family: inherit;
+      font-size: 0.82rem;
+      padding: 8px 26px;
+      cursor: pointer;
+      letter-spacing: 0.12em;
+      outline: none;
+      transition: background 0.12s, box-shadow 0.12s;
+    }
+    .btn:hover, .btn:focus {
+      background: rgba(80,250,123,0.1);
+      box-shadow: 0 0 14px rgba(80,250,123,0.25);
+    }
+    .btn.danger { color: #ff5555; }
+    .btn.danger:hover, .btn.danger:focus {
+      background: rgba(255,85,85,0.1);
+      box-shadow: 0 0 14px rgba(255,85,85,0.2);
+    }
+    .btn-row { display: flex; gap: 10px; }
+
+    /* Countdown */
+    #cd-num {
+      font-size: 7rem;
+      font-weight: bold;
+      line-height: 1;
+      text-shadow: 0 0 40px currentColor;
+    }
+
+    /* Game over stats */
+    .go-grid {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 7px 14px;
+      font-size: 0.82rem;
+    }
+    .go-lbl { color: #555; text-align: right; }
+    .go-val { font-weight: bold; }
+
+    #new-high {
+      color: #f1fa8c;
+      font-size: 0.88rem;
+      text-shadow: 0 0 12px #f1fa8c88;
+      animation: pulse 0.9s ease-in-out infinite alternate;
+    }
+    @keyframes pulse {
+      from { opacity: 0.65; transform: scale(1); }
+      to   { opacity: 1;    transform: scale(1.04); }
+    }
+
+    .pause-title { color: #f1fa8c; font-size: 1.7rem; letter-spacing: 0.15em; }
+    .pause-hint  { color: #555; font-size: 0.78rem; }
+  </style>
+</head>
+<body>
+  <h1>SNAKE</h1>
+
+  <div id="field">
+    <canvas id="game"></canvas>
+
+    <!-- Start screen -->
+    <div id="start-screen" class="overlay">
+      <div class="ovl-title" style="color:#50fa7b">SNAKE</div>
+      <div class="ovl-sub">Web Edition</div>
+      <div class="ctrl-box">
+        <span class="ctrl-key">W / ↑</span>  <span class="ctrl-desc">Move Up</span>
+        <span class="ctrl-key">S / ↓</span>  <span class="ctrl-desc">Move Down</span>
+        <span class="ctrl-key">A / ←</span>  <span class="ctrl-desc">Move Left</span>
+        <span class="ctrl-key">D / →</span>  <span class="ctrl-desc">Move Right</span>
+        <span class="ctrl-key">P</span>      <span class="ctrl-desc">Pause / Resume</span>
+        <span class="ctrl-key">Q</span>      <span class="ctrl-desc">Quit to Menu</span>
+      </div>
+      <div class="tip">Eat consecutive foods to stack your combo multiplier (up to ×8)</div>
+      <button class="btn" id="start-btn">▶  PRESS SPACE TO START</button>
+    </div>
+
+    <!-- Countdown -->
+    <div id="countdown-screen" class="overlay hidden">
+      <div id="cd-num" style="color:#f1fa8c">3</div>
+    </div>
+
+    <!-- Pause -->
+    <div id="pause-screen" class="overlay hidden">
+      <div class="pause-title">⏸ PAUSED</div>
+      <div class="pause-hint">Press P to resume</div>
+    </div>
+
+    <!-- Game over -->
+    <div id="gameover-screen" class="overlay hidden">
+      <div class="ovl-title" style="color:#ff5555">GAME OVER</div>
+      <div class="go-grid">
+        <span class="go-lbl">Score</span>       <span class="go-val c-green"  id="go-score">0</span>
+        <span class="go-lbl">High Score</span>  <span class="go-val c-yellow" id="go-high">0</span>
+        <span class="go-lbl">Length</span>      <span class="go-val"          id="go-length">0</span>
+        <span class="go-lbl">Foods Eaten</span> <span class="go-val c-purple" id="go-foods">0</span>
+        <span class="go-lbl">Lives Left</span>  <span class="go-val c-red"    id="go-lives">0</span>
+      </div>
+      <div id="new-high" class="hidden">★ New Personal Best! ★</div>
+      <div class="btn-row">
+        <button class="btn" id="again-btn">▶  Play Again</button>
+        <button class="btn danger" id="quit-btn">■  Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD (outside #field so overlays don't cover it) -->
+  <div id="hud">
+    <div class="stat">
+      <div class="stat-lbl">Score</div>
+      <div class="stat-val c-green"  id="hud-score">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-lbl">High</div>
+      <div class="stat-val c-yellow" id="hud-high">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-lbl">Level</div>
+      <div class="stat-val c-cyan"   id="hud-level">1</div>
+    </div>
+    <div id="bar-wrap">
+      <div id="bar-lbl">Level Progress</div>
+      <div id="bar-bg"><div id="bar-fill"></div></div>
+    </div>
+    <div class="stat">
+      <div class="stat-lbl">Lives</div>
+      <div class="stat-val c-red"    id="hud-lives">♥♥♥</div>
+    </div>
+    <div class="stat">
+      <div class="stat-lbl">Combo</div>
+      <div class="stat-val c-dim"    id="hud-combo">×1</div>
+    </div>
+    <div class="stat">
+      <div class="stat-lbl">Foods</div>
+      <div class="stat-val c-purple" id="hud-foods">0</div>
+    </div>
+  </div>
+
+  <script>
+    /* ── Constants ─────────────────────────────────────── */
+    const CELL          = 20;
+    const COLS          = 30;
+    const ROWS          = 20;
+    const MAX_FOODS     = 3;
+    const INITIAL_LIVES = 3;
+    const MAX_COMBO     = 8;
+
+    /* ── Canvas setup ───────────────────────────────────── */
+    const canvas = document.getElementById('game');
+    const ctx    = canvas.getContext('2d');
+    canvas.width  = COLS * CELL;  // 600
+    canvas.height = ROWS * CELL;  // 400
+
+    /* ── Persistent high score ──────────────────────────── */
+    let globalHigh  = +localStorage.getItem('snakeHigh') || 0;
+    let highAtStart = 0;
+
+    /* ── State machine ──────────────────────────────────── */
+    const S = { START: 0, COUNTDOWN: 1, PLAYING: 2, PAUSED: 3, GAMEOVER: 4 };
+    let state = S.START;
+
+    /* ── Game variables ──────────────────────────────────── */
+    let snake, dx, dy, nextDx, nextDy;
+    let foods, score, level, lives, combo, foodsEaten, ticks;
+    let lastTs = 0, accum = 0;
+
+    /* ── DOM helpers ─────────────────────────────────────── */
+    const $  = id => document.getElementById(id);
+    const screens = {
+      start:     $('start-screen'),
+      countdown: $('countdown-screen'),
+      pause:     $('pause-screen'),
+      gameover:  $('gameover-screen'),
+    };
+    const cdNum    = $('cd-num');
+    const barFill  = $('bar-fill');
+    const newHighEl = $('new-high');
+
+    function hideAll() {
+      Object.values(screens).forEach(s => s.classList.add('hidden'));
+    }
+    function show(name) { hideAll(); screens[name].classList.remove('hidden'); }
+
+    /* ── Init ────────────────────────────────────────────── */
+    function initGame() {
+      highAtStart = globalHigh;
+      const cx = COLS >> 1, cy = ROWS >> 1;
+      snake  = [{ x: cx, y: cy }, { x: cx - 1, y: cy }, { x: cx - 2, y: cy }];
+      dx = 1; dy = 0; nextDx = 1; nextDy = 0;
+      foods = []; score = 0; level = 1; lives = INITIAL_LIVES;
+      combo = 0; foodsEaten = 0; ticks = 0;
+      lastTs = 0; accum = 0;
+      for (let i = 0; i < MAX_FOODS; i++) spawnFood();
+    }
+
+    function spawnFood() {
+      let p, tries = 0;
+      do {
+        p = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
+      } while (
+        ++tries < 500 && (
+          snake.some(s => s.x === p.x && s.y === p.y) ||
+          foods.some(f => f.x === p.x && f.y === p.y)
+        )
+      );
+      foods.push(p);
+    }
+
+    /* ── Update ──────────────────────────────────────────── */
+    function frameMs() {
+      return Math.max(50, 180 - 15 * (level - 1));
+    }
+
+    function update() {
+      dx = nextDx; dy = nextDy;
+      const nx = snake[0].x + dx;
+      const ny = snake[0].y + dy;
+
+      // Wall collision
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) { onCollide(); return; }
+
+      // Self collision (tail excluded — it vacates this tick)
+      for (let i = 0; i < snake.length - 1; i++) {
+        if (snake[i].x === nx && snake[i].y === ny) { onCollide(); return; }
+      }
+
+      const fi = foods.findIndex(f => f.x === nx && f.y === ny);
+      snake.unshift({ x: nx, y: ny });
+
+      if (fi >= 0) {
+        foods.splice(fi, 1);
+        foodsEaten++;
+        combo++;
+        const mult = Math.min(combo, MAX_COMBO);
+        score += 10 * level * mult;
+        if (score > globalHigh) {
+          globalHigh = score;
+          localStorage.setItem('snakeHigh', globalHigh);
+        }
+        level = Math.min(10, Math.floor(score / 50) + 1);
+        spawnFood();
+      } else {
+        snake.pop();
+      }
+      ticks++;
+    }
+
+    function onCollide() {
+      combo = 0;
+      lives--;
+      if (lives <= 0) { endGame(); return; }
+      // Respawn
+      const cx = COLS >> 1, cy = ROWS >> 1;
+      snake  = [{ x: cx, y: cy }, { x: cx - 1, y: cy }, { x: cx - 2, y: cy }];
+      dx = 1; dy = 0; nextDx = 1; nextDy = 0;
+      foods = [];
+      for (let i = 0; i < MAX_FOODS; i++) spawnFood();
+    }
+
+    function endGame() {
+      if (score > globalHigh) {
+        globalHigh = score;
+        localStorage.setItem('snakeHigh', globalHigh);
+      }
+      const isNewHigh = score > highAtStart && score > 0;
+      state = S.GAMEOVER;
+
+      $('go-score').textContent  = score;
+      $('go-high').textContent   = globalHigh;
+      $('go-length').textContent = snake.length;
+      $('go-foods').textContent  = foodsEaten;
+      $('go-lives').textContent  = lives;
+      newHighEl.classList.toggle('hidden', !isNewHigh);
+      show('gameover');
+      render();
+    }
+
+    /* ── Render ──────────────────────────────────────────── */
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.arcTo(x + w, y,     x + w, y + r,     r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+      ctx.lineTo(x + r, y + h);
+      ctx.arcTo(x, y + h,     x, y + h - r,     r);
+      ctx.lineTo(x, y + r);
+      ctx.arcTo(x, y,         x + r, y,          r);
+      ctx.closePath();
+    }
+
+    function render() {
+      // Background
+      ctx.fillStyle = '#0a0a0f';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Subtle grid
+      ctx.strokeStyle = '#13131e';
+      ctx.lineWidth = 0.5;
+      for (let x = 0; x <= COLS; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x * CELL, 0);
+        ctx.lineTo(x * CELL, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= ROWS; y++) {
+        ctx.beginPath();
+        ctx.moveTo(0, y * CELL);
+        ctx.lineTo(canvas.width, y * CELL);
+        ctx.stroke();
+      }
+
+      // Foods — blink every 5 ticks
+      if (Math.floor(ticks / 5) % 2 === 0) {
+        ctx.fillStyle  = '#ff5555';
+        ctx.shadowColor = '#ff4444';
+        ctx.shadowBlur = 14;
+        foods.forEach(f => {
+          ctx.beginPath();
+          ctx.arc(f.x * CELL + CELL / 2, f.y * CELL + CELL / 2, CELL / 2 - 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.shadowBlur = 0;
+      }
+
+      // Snake
+      snake.forEach((seg, i) => {
+        const isHead = i === 0;
+        const m = isHead ? 1 : 2;
+        const x = seg.x * CELL + m, y = seg.y * CELL + m;
+        const w = CELL - m * 2,     h = CELL - m * 2;
+
+        ctx.fillStyle = isHead ? '#50fa7b' : '#1e7a3a';
+        if (isHead) { ctx.shadowColor = '#50fa7b'; ctx.shadowBlur = 12; }
+        roundRect(x, y, w, h, 3);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+
+      // HUD elements
+      $('hud-score').textContent = score;
+      $('hud-high').textContent  = globalHigh;
+      $('hud-level').textContent = level;
+      $('hud-lives').textContent = '♥'.repeat(lives) +
+                                   '♡'.repeat(Math.max(0, INITIAL_LIVES - lives));
+      const mult    = Math.min(combo, MAX_COMBO) || 1;
+      const comboEl = $('hud-combo');
+      comboEl.textContent = `×${mult}`;
+      comboEl.className   = `stat-val ${mult >= 2 ? 'c-combo' : 'c-dim'}`;
+      $('hud-foods').textContent = foodsEaten;
+
+      // Level progress bar
+      const pct = level >= 10
+        ? 100
+        : Math.round(((score - (level - 1) * 50) / 50) * 100);
+      barFill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    }
+
+    /* ── Game loop ───────────────────────────────────────── */
+    function loop(ts) {
+      if (state !== S.PLAYING) return;
+      if (!lastTs) lastTs = ts;
+      accum += ts - lastTs;
+      lastTs = ts;
+
+      const ms = frameMs();
+      while (accum >= ms) {
+        update();
+        accum -= ms;
+        if (state !== S.PLAYING) return;
+      }
+
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    /* ── Screen transitions ──────────────────────────────── */
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function startGame() {
+      initGame();
+      state = S.COUNTDOWN;
+      show('countdown');
+      render();
+
+      for (const [label, color, wait] of [
+        ['3', '#f1fa8c', 700],
+        ['2', '#f1fa8c', 700],
+        ['1', '#f1fa8c', 700],
+        ['GO!', '#50fa7b', 400],
+      ]) {
+        cdNum.textContent  = label;
+        cdNum.style.color  = color;
+        cdNum.style.textShadow = `0 0 40px ${color}`;
+        await sleep(wait);
+      }
+
+      hideAll();
+      state = S.PLAYING;
+      requestAnimationFrame(loop);
+    }
+
+    function showMenu() {
+      state = S.START;
+      show('start');
+      ctx.fillStyle = '#0a0a0f';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function togglePause() {
+      if (state === S.PLAYING) {
+        state = S.PAUSED;
+        show('pause');
+      } else if (state === S.PAUSED) {
+        hideAll();
+        state = S.PLAYING;
+        lastTs = 0;
+        requestAnimationFrame(loop);
+      }
+    }
+
+    /* ── Input ───────────────────────────────────────────── */
+    document.addEventListener('keydown', e => {
+      const k = e.key;
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(k)) {
+        e.preventDefault();
+      }
+
+      if (state === S.START || state === S.GAMEOVER) {
+        if (k === ' ' || k === 'Enter')              startGame();
+        if ((k === 'q' || k === 'Q') && state === S.GAMEOVER) showMenu();
+        return;
+      }
+      if (state === S.COUNTDOWN) return;
+
+      if (k === 'p' || k === 'P') { togglePause(); return; }
+      if ((k === 'q' || k === 'Q') && state === S.PLAYING) { endGame(); return; }
+      if (state !== S.PLAYING) return;
+
+      if ((k === 'w' || k === 'W' || k === 'ArrowUp')    && dy !==  1) { nextDx =  0; nextDy = -1; }
+      if ((k === 's' || k === 'S' || k === 'ArrowDown')  && dy !== -1) { nextDx =  0; nextDy =  1; }
+      if ((k === 'a' || k === 'A' || k === 'ArrowLeft')  && dx !==  1) { nextDx = -1; nextDy =  0; }
+      if ((k === 'd' || k === 'D' || k === 'ArrowRight') && dx !== -1) { nextDx =  1; nextDy =  0; }
+    });
+
+    $('start-btn').addEventListener('click', startGame);
+    $('again-btn').addEventListener('click', startGame);
+    $('quit-btn').addEventListener('click', showMenu);
+
+    /* ── Boot ────────────────────────────────────────────── */
+    $('hud-high').textContent = globalHigh;
+    showMenu();
+  </script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terminal Snake — WebAssembly</title>
+
+  <link  rel="stylesheet"
+         href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0d0d;
+      color: #ccc;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 12px;
+    }
+    h1 { font-size: 1.05rem; letter-spacing: 0.18em; color: #44ee44; }
+    p  { font-size: 0.72rem; color: #444; letter-spacing: 0.06em; }
+    #terminal-wrap {
+      border: 1px solid #1e1e1e;
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 0 40px #000;
+    }
+  </style>
+</head>
+<body>
+  <h1>TERMINAL SNAKE &mdash; WebAssembly Edition</h1>
+  <p>WASD / Arrow Keys &nbsp;&bull;&nbsp; P: Pause &nbsp;&bull;&nbsp; Q: Quit</p>
+  <div id="terminal-wrap"><div id="terminal"></div></div>
+
+  <script>
+    /* ── xterm.js terminal ─────────────────────────────────── */
+    const term = new Terminal({
+      cols: 80, rows: 30,
+      cursorBlink: false,
+      theme: {
+        background:    '#0d0d0d',
+        foreground:    '#cccccc',
+        black:         '#0d0d0d',
+        brightBlack:   '#444444',
+        green:         '#22aa22', brightGreen:   '#44ee44',
+        yellow:        '#aaaa00', brightYellow:  '#eeee44',
+        red:           '#cc2222', brightRed:     '#ee4444',
+        cyan:          '#22aaaa', brightCyan:    '#44eeee',
+        magenta:       '#aa22aa', brightMagenta: '#ee44ee',
+        white:         '#aaaaaa', brightWhite:   '#eeeeee',
+      },
+    });
+    term.open(document.getElementById('terminal'));
+    term.focus();
+
+    /* ── Stdout bridge: each byte from C → xterm ───────────── */
+    window.__xtermWrite = function(charCode) {
+      term.write(String.fromCharCode(charCode));
+    };
+
+    /* ── Forward key events → Wasm ─────────────────────────── */
+    term.onKey(function(e) {
+      e.domEvent.preventDefault();
+      if (typeof Module !== 'undefined' && Module._wasm_push_key) {
+        Module._wasm_push_key(e.domEvent.keyCode);
+      }
+    });
+
+    /* ── Emscripten Module ─────────────────────────────────── */
+    var Module = {};
+  </script>
+
+  <script src="snake.js"></script>
+</body>
+</html>

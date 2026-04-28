@@ -6,7 +6,9 @@
 #include "screen.h"
 #include "string.h"
 #include <stdio.h>   /* allowed: terminal I/O only */
+#ifndef __EMSCRIPTEN__
 #include <sys/ioctl.h>
+#endif
 #include <unistd.h>
 
 static int layout_field_x = FIELD_X;
@@ -21,14 +23,21 @@ static int clamp_int(int v, int lo, int hi) {
 }
 
 void screen_update_layout(void) {
-    struct winsize ws;
     int term_w = 80;
     int term_h = 24;
 
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
-        if (ws.ws_col > 0) term_w = (int)ws.ws_col;
-        if (ws.ws_row > 0) term_h = (int)ws.ws_row;
+#ifndef __EMSCRIPTEN__
+    {
+        struct winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+            if (ws.ws_col > 0) term_w = (int)ws.ws_col;
+            if (ws.ws_row > 0) term_h = (int)ws.ws_row;
+        }
     }
+#else
+    term_w = 80;
+    term_h = 30;
+#endif
 
     {
         int min_w = 20;
