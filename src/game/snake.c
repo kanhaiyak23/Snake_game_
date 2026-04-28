@@ -85,8 +85,9 @@ static int lose_life_and_respawn(GameState *gs) {
         return 0;
     }
 
-    /* Still has lives: decrement, rebuild snake, and refresh food set. */
+    /* Still has lives: decrement, reset combo, rebuild snake, and refresh food set. */
     gs->lives--;
+    gs->combo = 0;
     clear_snake(gs);
     if (!reset_snake(gs)) {
         gs->game_over = 1;
@@ -167,6 +168,7 @@ void game_init(GameState *gs, int prev_high_score) {
     gs->foods_eaten = 0;
     gs->lives       = INITIAL_LIVES;
     gs->game_end_reason = GAME_END_NONE;
+    gs->combo       = 0;
 
     {
         /* Initialize all food slots so multiple foods are active from start. */
@@ -275,11 +277,15 @@ void game_update(GameState *gs) {
     gs->snake.length++;
 
     if (ate) {
-        /* Eat path: keep tail (grow), update score/level, respawn eaten slot. */
+        /* Eat path: keep tail (grow), update combo/score/level, respawn eaten slot. */
         gs->foods[eaten_idx].active = 0;
         gs->foods_eaten++;
-        /* Score increments by level * 10 — computed via math.c mul */
-        gs->score += my_mul(10, gs->level);
+        gs->combo++;
+        {
+            /* multiplier = combo, capped at MAX_COMBO_MULT */
+            int mult = my_clamp(gs->combo, 1, MAX_COMBO_MULT);
+            gs->score += my_mul(my_mul(10, gs->level), mult);
+        }
         if (gs->score > gs->high_score) gs->high_score = gs->score;
         /* Level up every 50 points — computed via math.c div */
         gs->level = my_div(gs->score, 50) + 1;
@@ -408,12 +414,14 @@ void game_render(const GameState *gs) {
      * Narrow field -> compact labels to avoid overflow.
      */
     int score_row = field_y + field_h + 2;
-    char sbuf[16], hbuf[16], lenbuf[8], fbuf[8], lbuf[8];
+    char sbuf[16], hbuf[16], lenbuf[8], fbuf[8], lbuf[8], multbuf[8];
+    int  mult = my_clamp(gs->combo, 1, MAX_COMBO_MULT);
     my_itoa(gs->score,        sbuf);
     my_itoa(gs->high_score,   hbuf);
     my_itoa(gs->snake.length, lenbuf);
     my_itoa(gs->foods_eaten,  fbuf);
     my_itoa(gs->lives,        lbuf);
+    my_itoa(mult,             multbuf);
 
     screen_goto(hud_col, score_row);
     if (field_w >= 38) {
@@ -442,6 +450,13 @@ void game_render(const GameState *gs) {
         screen_set_fg(96);
         screen_putstr(lbuf);
         screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr("  Mult:");
+        if (mult > 1) { screen_set_fg(93); screen_set_bold(); }
+        else            screen_set_fg(90);
+        screen_putstr("x");
+        screen_putstr(multbuf);
+        screen_reset_color();
     } else {
         screen_set_fg(97);
         screen_putstr("S:");
@@ -467,6 +482,13 @@ void game_render(const GameState *gs) {
         screen_putstr(" V:");
         screen_set_fg(96);
         screen_putstr(lbuf);
+        screen_reset_color();
+        screen_set_fg(97);
+        screen_putstr(" Mx:");
+        if (mult > 1) { screen_set_fg(93); screen_set_bold(); }
+        else            screen_set_fg(90);
+        screen_putstr("x");
+        screen_putstr(multbuf);
         screen_reset_color();
     }
 

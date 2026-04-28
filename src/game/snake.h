@@ -33,6 +33,7 @@ typedef struct Food {
 #define GAME_END_QUIT       3  /* user pressed Q */
 #define GAME_END_INTERNAL   4  /* broken invariant; should never run in normal play */
 #define INITIAL_LIVES       3
+#define MAX_COMBO_MULT      8  /* multiplier caps at 8× (combo 7) */
 
 typedef struct GameState {
     Snake   snake;
@@ -46,6 +47,7 @@ typedef struct GameState {
     int     foods_eaten;   /* total food items consumed this game */
     int     lives;         /* remaining lives before game over    */
     int     game_end_reason; /* GAME_END_* when game_over is set */
+    int     combo;         /* consecutive foods eaten without dying */
 } GameState;
 
 /* ---- API ---- */
