@@ -19,10 +19,12 @@
 #include "../libs/memory.h"
 #include "../libs/screen.h"
 #include "../libs/keyboard.h"
+#include "../libs/sound.h"
 #include <stdio.h>    /* allowed: printf for score UI only */
 #include <unistd.h>  /* usleep */
 
 static void place_food(GameState *gs, int food_idx);
+static void place_obstacles(GameState *gs);
 
 /* ---------------------------------------------------------------
  * Internal helper: allocate a new Segment at (x,y).
@@ -77,6 +79,7 @@ static void clear_snake(GameState *gs) {
 
 /* Lose one life and respawn; returns 1 if game should continue. */
 static int lose_life_and_respawn(GameState *gs) {
+    sound_die();
     /* Last life consumed -> end this run with collision reason. */
     if (gs->lives <= 1) {
         gs->lives = 0;
@@ -132,10 +135,67 @@ static void place_food(GameState *gs, int food_idx) {
             }
         }
         if (ok) {
-            /* Commit this food slot when both placement rules pass. */
+            /* Rule 3: do not place food on any obstacle. */
+            int j;
+            for (j = 0; j < gs->num_obstacles; j++) {
+                if (gs->obstacles[j].active &&
+                    gs->obstacles[j].x == fx && gs->obstacles[j].y == fy) {
+                    ok = 0;
+                    break;
+                }
+            }
+        }
+        if (ok) {
             gs->foods[food_idx].x = fx;
             gs->foods[food_idx].y = fy;
             gs->foods[food_idx].active = 1;
+        }
+    }
+}
+
+static void place_obstacles(GameState *gs) {
+    int field_w = screen_field_w();
+    int field_h = screen_field_h();
+    int cx      = my_div(field_w, 2);
+    int cy      = my_div(field_h, 2);
+    int i;
+
+    for (i = 0; i < MAX_OBSTACLES; i++) gs->obstacles[i].active = 0;
+
+    for (i = 0; i < gs->num_obstacles; i++) {
+        int ok = 0;
+        int attempts = 0;
+        while (!ok && attempts < 200) {
+            int ox = my_rand_range(0, field_w);
+            int oy = my_rand_range(0, field_h);
+            attempts++;
+
+            /* Keep a 5-cell clear zone around the snake spawn point. */
+            if (ox >= cx - 4 && ox <= cx + 4 &&
+                oy >= cy - 2 && oy <= cy + 2) continue;
+
+            ok = 1;
+            /* No overlap with other obstacles. */
+            int j;
+            for (j = 0; j < i; j++) {
+                if (gs->obstacles[j].active &&
+                    gs->obstacles[j].x == ox && gs->obstacles[j].y == oy) {
+                    ok = 0; break;
+                }
+            }
+            if (!ok) continue;
+            /* No overlap with food. */
+            for (j = 0; j < MAX_FOODS; j++) {
+                if (gs->foods[j].active &&
+                    gs->foods[j].x == ox && gs->foods[j].y == oy) {
+                    ok = 0; break;
+                }
+            }
+            if (ok) {
+                gs->obstacles[i].x      = ox;
+                gs->obstacles[i].y      = oy;
+                gs->obstacles[i].active = 1;
+            }
         }
     }
 }
@@ -145,7 +205,7 @@ static void place_food(GameState *gs, int food_idx) {
  * Snake starts as 3 segments in the middle of the field.
  * high_score is passed in so it persists across games.
  * --------------------------------------------------------------- */
-void game_init(GameState *gs, int prev_high_score) {
+void game_init(GameState *gs, int prev_high_score, int wrap_mode) {
     screen_update_layout();
     /* Reset memory pool for clean start each game */
     mem_init();
@@ -169,12 +229,15 @@ void game_init(GameState *gs, int prev_high_score) {
     gs->lives       = INITIAL_LIVES;
     gs->game_end_reason = GAME_END_NONE;
     gs->combo       = 0;
+    gs->wrap_mode   = wrap_mode;
+    /* Start with 4 obstacles; more appear as the game progresses. */
+    gs->num_obstacles = 4;
 
     {
-        /* Initialize all food slots so multiple foods are active from start. */
         int i;
         for (i = 0; i < MAX_FOODS; i++) place_food(gs, i);
     }
+    place_obstacles(gs);
 }
 
 /* ---------------------------------------------------------------
@@ -227,10 +290,21 @@ void game_update(GameState *gs) {
     int nx = gs->snake.head->x + gs->snake.dx;
     int ny = gs->snake.head->y + gs->snake.dy;
 
-    /* --- Boundary check via math.c --- */
-    if (!my_in_bounds(nx, ny, screen_field_w(), screen_field_h())) {
-        (void)lose_life_and_respawn(gs);
-        return;
+    /* --- Boundary check / wrap --- */
+    if (gs->wrap_mode) {
+        int fw = screen_field_w();
+        int fh = screen_field_h();
+        int wrapped = 0;
+        if (nx < 0)        { nx = fw - 1; wrapped = 1; }
+        else if (nx >= fw) { nx = 0;      wrapped = 1; }
+        if (ny < 0)        { ny = fh - 1; wrapped = 1; }
+        else if (ny >= fh) { ny = 0;      wrapped = 1; }
+        if (wrapped) sound_wrap();
+    } else {
+        if (!my_in_bounds(nx, ny, screen_field_w(), screen_field_h())) {
+            (void)lose_life_and_respawn(gs);
+            return;
+        }
     }
 
     /* --- Self-collision check ---
@@ -246,6 +320,18 @@ void game_update(GameState *gs) {
                 return;
             }
             cur = cur->next;
+        }
+    }
+
+    /* --- Obstacle collision --- */
+    {
+        int i;
+        for (i = 0; i < gs->num_obstacles; i++) {
+            if (gs->obstacles[i].active &&
+                gs->obstacles[i].x == nx && gs->obstacles[i].y == ny) {
+                (void)lose_life_and_respawn(gs);
+                return;
+            }
         }
     }
 
@@ -281,6 +367,7 @@ void game_update(GameState *gs) {
         gs->foods[eaten_idx].active = 0;
         gs->foods_eaten++;
         gs->combo++;
+        sound_eat(gs->combo);
         {
             /* multiplier = combo, capped at MAX_COMBO_MULT */
             int mult = my_clamp(gs->combo, 1, MAX_COMBO_MULT);
@@ -288,8 +375,21 @@ void game_update(GameState *gs) {
         }
         if (gs->score > gs->high_score) gs->high_score = gs->score;
         /* Level up every 50 points — computed via math.c div */
-        gs->level = my_div(gs->score, 50) + 1;
-        if (gs->level > 10) gs->level = 10;
+        {
+            int old_level = gs->level;
+            gs->level = my_div(gs->score, 50) + 1;
+            if (gs->level > 10) gs->level = 10;
+            if (gs->level > old_level) sound_levelup();
+        }
+        /* Add an obstacle each time level crosses an even boundary. */
+        {
+            int target = 4 + my_div(gs->level - 1, 2);
+            if (target > MAX_OBSTACLES) target = MAX_OBSTACLES;
+            if (target > gs->num_obstacles) {
+                gs->num_obstacles = target;
+                place_obstacles(gs);
+            }
+        }
         place_food(gs, eaten_idx);
     } else {
         /* Normal move path: advance head and remove old tail segment. */
@@ -346,6 +446,12 @@ void game_render(const GameState *gs) {
     screen_set_bold();
     screen_putstr(" SNAKE");
     screen_reset_color();
+    if (gs->wrap_mode) {
+        screen_set_fg(96);
+        screen_set_bold();
+        screen_putstr(" [WRAP]");
+        screen_reset_color();
+    }
     screen_set_fg(90);
     if (field_w >= 36) {
         screen_putstr("  |  WASD/Arrows  P:Pause  Q:Quit");
@@ -391,6 +497,20 @@ void game_render(const GameState *gs) {
                 screen_putchar('@');
                 screen_reset_color();
             }
+        }
+    }
+
+    /* Render obstacles — solid magenta '#'. */
+    {
+        int i;
+        for (i = 0; i < gs->num_obstacles; i++) {
+            if (!gs->obstacles[i].active) continue;
+            screen_goto(field_x + gs->obstacles[i].x,
+                        field_y + gs->obstacles[i].y);
+            screen_set_fg(95);
+            screen_set_bold();
+            screen_putchar('#');
+            screen_reset_color();
         }
     }
 

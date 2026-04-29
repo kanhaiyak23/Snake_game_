@@ -8,7 +8,8 @@ LIB_SRCS = src/libs/math.c \
            src/libs/string.c \
            src/libs/memory.c \
            src/libs/screen.c \
-           src/libs/keyboard.c
+           src/libs/keyboard.c \
+           src/libs/sound.c
 
 GAME_SRCS = src/game/snake.c \
             src/game/main.c
@@ -31,6 +32,7 @@ WASM_SRCS  = src/libs/math.c \
              src/wasm/screen_wasm.c \
              src/game/snake.c \
              src/wasm/keyboard_wasm.c \
+             src/wasm/sound_wasm.c \
              src/wasm/main_wasm.c
 
 .PHONY: all clean run wasm wasm-clean

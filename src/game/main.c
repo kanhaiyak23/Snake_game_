@@ -27,6 +27,7 @@
 #include "../libs/memory.h"
 #include "../libs/screen.h"
 #include "../libs/keyboard.h"
+#include "../libs/sound.h"
 #include "snake.h"
 
 /* ---------------------------------------------------------------
@@ -148,6 +149,71 @@ static void show_start_screen(void) {
         }
     }
     drain_input();
+}
+
+/* ---------------------------------------------------------------
+ * show_mode_menu: let the player choose Classic or Wrap mode.
+ * Returns 0 for Classic, 1 for Wrap.
+ * --------------------------------------------------------------- */
+static int show_mode_menu(void) {
+    int sel = 0;
+    for (;;) {
+        screen_clear();
+
+        screen_goto(10, 3);
+        screen_set_fg(92); screen_set_bold();
+        screen_putstr("  SELECT GAME MODE");
+        screen_reset_color();
+
+        draw_hline(9, 4, 50);
+
+        /* Option 0 */
+        screen_goto(10, 6);
+        if (sel == 0) {
+            screen_set_fg(92); screen_set_bold();
+            screen_putstr("  > [ CLASSIC MODE ]");
+        } else {
+            screen_set_fg(90);
+            screen_putstr("    [ CLASSIC MODE ]");
+        }
+        screen_reset_color();
+        screen_goto(14, 7);
+        screen_set_fg(90);
+        screen_putstr("Hit a wall or obstacle = lose a life");
+        screen_reset_color();
+
+        /* Option 1 */
+        screen_goto(10, 9);
+        if (sel == 1) {
+            screen_set_fg(96); screen_set_bold();
+            screen_putstr("  > [ WRAP MODE    ]");
+        } else {
+            screen_set_fg(90);
+            screen_putstr("    [ WRAP MODE    ]");
+        }
+        screen_reset_color();
+        screen_goto(14, 10);
+        screen_set_fg(90);
+        screen_putstr("Exit right wall -> appear from left  (obstacles still lethal)");
+        screen_reset_color();
+
+        draw_hline(9, 12, 50);
+        screen_goto(10, 13);
+        screen_set_fg(33);
+        screen_putstr("  W/S or Up/Down to navigate    SPACE/ENTER to confirm");
+        screen_reset_color();
+
+        screen_flush();
+
+        drain_input();
+        {
+            char k = 0;
+            while (!k) { k = keyPressed(); usleep(15000); }
+            if (k == KEY_UP   || k == 'w' || k == 'W') sel = 0;
+            if (k == KEY_DOWN || k == 's' || k == 'S') sel = 1;
+            if (k == ' ' || k == '\n' || k == '\r')    return sel;
+        }
+    }
 }
 
 /* ---------------------------------------------------------------
@@ -351,9 +417,14 @@ int main(void) {
     while (running) {
         int prev_high = high_score;
 
+        /* Let the player pick Classic or Wrap mode */
+        int mode = show_mode_menu();
+        drain_input();
+
         /* 5. Initialise game state — carry high score forward */
         GameState gs;
-        game_init(&gs, high_score);
+        game_init(&gs, high_score, mode);
+        sound_game_start();
 
         /* Show initial frame then the 3-2-1 countdown */
         game_render(&gs);

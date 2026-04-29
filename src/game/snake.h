@@ -24,7 +24,13 @@ typedef struct Food {
     int active;
 } Food;
 
-#define MAX_FOODS 3
+#define MAX_FOODS     3
+#define MAX_OBSTACLES 10
+
+typedef struct Obstacle {
+    int x, y;
+    int active;
+} Obstacle;
 
 /* Why the session ended — used for game-over message (e.g. heap full). */
 #define GAME_END_NONE       0
@@ -36,23 +42,26 @@ typedef struct Food {
 #define MAX_COMBO_MULT      8  /* multiplier caps at 8× (combo 7) */
 
 typedef struct GameState {
-    Snake   snake;
-    Food    foods[MAX_FOODS];
-    int     score;
-    int     high_score;
-    int     level;
-    int     game_over;
-    int     paused;
-    int     ticks;         /* frame counter                       */
-    int     foods_eaten;   /* total food items consumed this game */
-    int     lives;         /* remaining lives before game over    */
-    int     game_end_reason; /* GAME_END_* when game_over is set */
-    int     combo;         /* consecutive foods eaten without dying */
+    Snake    snake;
+    Food     foods[MAX_FOODS];
+    Obstacle obstacles[MAX_OBSTACLES];
+    int      num_obstacles;           /* active obstacle count this game  */
+    int      score;
+    int      high_score;
+    int      level;
+    int      game_over;
+    int      paused;
+    int      ticks;         /* frame counter                       */
+    int      foods_eaten;   /* total food items consumed this game */
+    int      lives;         /* remaining lives before game over    */
+    int      game_end_reason; /* GAME_END_* when game_over is set */
+    int      combo;         /* consecutive foods eaten without dying */
+    int      wrap_mode;    /* 1 = walls wrap around, 0 = walls kill  */
 } GameState;
 
 /* ---- API ---- */
 
-void game_init(GameState *gs, int prev_high_score);
+void game_init(GameState *gs, int prev_high_score, int wrap_mode);
 void game_update(GameState *gs);            /* advance one tick           */
 void game_handle_input(GameState *gs, char key);
 void game_render(const GameState *gs);      /* draw everything            */
